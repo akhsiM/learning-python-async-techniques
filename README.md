@@ -205,6 +205,143 @@ One generates an item (generate a report, send this email, trigger this alert). 
 
 There's another part of the system that's running asynchronously that looks for work to be done. This is the **consumer**. It picks up these jobs that have been created by the producer and starts working on them.
 
+### Synchronous App
+
+![](./code_img/README-2022-06-15-22-02-04.png)
+
+The producer and the consumer are working synchronously. As such, the consumer doesn't get to consume until 20 second mark.
+
+```py
+    generate_data(20, data)
+    process_data(20, data)
+```
+
+The overall time it took to run was 30.60 sec.
+
+We could improve this tremendously by using `asyncio`.
+
+### Asynchronous App
+
+There are a couple of things we need to do to make a program asynchronous. 
+
+Syntactically simple but conceptually complex.
+
+#### The loop
+
+In order to run asynchronous code routine, we can't just call them like a normal function. We have to call them in an asyncio loop. That asyncio loop is going to execute on whatever thread or environment that we started on. It is **our** job to create and run that loop.
+```py
+loop = asyncio.new_event_loop()
+```
+
+Later on, this loop is set to run until complete
+```py
+    loop.run_until_complete(something_we_need_to_pass_in)
+```
+
+What is going into the function? Essentially the functions that we want to run asynchronously until completed.
+
+We also need to change the type of data that we need to use. Right now we have a list.
+```py
+data = []
+```
+
+#### The Queue
+
+We can use a list. But `asyncio` has a way to deal with this better.
+```py
+data = asyncio.Queue()
+```
+
+A queue is cool. Something goes in something comes out. FIFO.
+
+A queue allows us to wait and tell `asyncio` to continue doing other work, until something comes in this queue, then wakes up/ resume the code routine and get it running.
+
+Wih this new `Queue` type, we also change the way we interact with it. `append` is now `put` and `pop` is new `get`.
+
+Then, we are going to kick the execution of `generate_data` and `process_data` separately together, then put it to `run_until_complete()`.
+
+#### Tasks in the loop; and the final task
+
+We need to create the tasks in the loop.
+```py
+task1 = loop.create_task(generate_data(20, data))
+task2 = loop.create_task(produce_data(20, data))
+```
+ 
+The `run_until_complete()` takes a single thing to run. This thing is of type `future`.
+```py
+final_task = asyncio.gather([task1, task2])
+```
+
+Then..
+```py
+loop.run_until_complete(final_task)
+```
+
+That is the execution level code. However we don't yet have async code routine down below.
+
+So our next task is to convert those functions into async code routine.
+
+#### async function
+
+How do we adapt the two functions to `asyncio`?
+
+There are two things that we need to do to make a synchronous code routine asynchonous.
+
+We have to mark the method as an `async` method.
+```py
+async def generate_data(num: int, data: asyncio.Queue):
+```
+
+This is just the function signature. It doesn't actually matter. Just because the code says it is async, doesn't mean that it will run async.
+
+We have to actually convert the logic to async by breaking it down to little pieces of unit and the dividing point are "Where are we waiting?", "What are we waiting on?".
+
+The most obvious answer to "Where are we waiting?" is at `time.sleep()`. We don't want to do `time.sleep()`.
+
+There is a better way to say "I am done with my work, I am going to take a rest for a while, you can keep working" by `asyncio.sleep()`.
+
+You also have to use `await` in front of the async operation. This will break up the code into little slices.
+```py
+async def generate_data(num: int, data: asyncio.Queue):
+    for idx in range(1, num + 1):
+        item = idx*idx
+        await data.put((item, datetime.datetime.now()))
+
+        print(colorama.Fore.YELLOW + f" -- generated item {idx}", flush=True)
+        await asyncio.sleep(random.random() + .5)
+```
+
+![](./code_img/README-2022-06-15-22-31-41.png)
+
+Because the consumer is much faster than the producer, or the produce isn't producing as fast as the consumer can consume, we keep seeing `0.00 sec`.
+
+So let's make one change, let's have two producers and make the consumers expect more inputs.
+
+![](./code_img/README-2022-06-15-22-33-44.png)
+
+The execution time of 22 seconds would have been 50 if this routine was done synchronously.
+
+#### The beautiful thing about using `asyncio`
+
+All we had to was to break up these functions into parts where we are waiting on something else. 
+
+We did't have to change our programming model at all. This is the most important thing. We are using the exact same code.
+
+The programming model is still the synchronous model we use. 
+
+#### Summary
+
+In summary, here is what we did:
+```
+1. Create a loop
+2. Create tasks
+3. Run the tasks until they complete
+```
+
+### Anatomy of an async method
+
+![](./code_img/README-2022-06-15-22-39-47.png)
 
 
 # Multi-threaded parallelism
