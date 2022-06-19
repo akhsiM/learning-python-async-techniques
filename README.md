@@ -339,9 +339,79 @@ In summary, here is what we did:
 3. Run the tasks until they complete
 ```
 
+The improvement in the `after` latency time is insane.
+```
+ -- generated item 16
+ -- generated item 17
+ -- generated item 18
+ -- generated item 19
+ -- generated item 20
+ +++ Processed value 1 after 20.49 sec.
+ +++ Processed value 4 after 19.61 sec.
+ +++ Processed value 9 after 18.87 sec.
+ +++ Processed value 16 after 18.39 sec.
+ +++ Processed value 25 after 17.70 sec.
+ +++ Processed value 36 after 17.13 sec.
+ +++ Processed value 49 after 16.24 sec.
+ +++ Processed value 64 after 15.40 sec.
+ +++ Processed value 81 after 15.37 sec.
+ +++ Processed value 100 after 14.82 sec.
+ +++ Processed value 121 after 14.49 sec.
+ +++ Processed value 144 after 13.72 sec.
+ +++ Processed value 169 after 13.47 sec.
+ +++ Processed value 196 after 13.35 sec.
+ +++ Processed value 225 after 12.73 sec.
+ +++ Processed value 256 after 12.36 sec.
+ +++ Processed value 289 after 12.07 sec.
+ +++ Processed value 324 after 11.24 sec.
+ +++ Processed value 361 after 11.01 sec.
+ +++ Processed value 400 after 10.11 sec.
+```
+
+versus
+
+```
+ -- generated item 15
+ +++ Processed value 225 after 0.88 sec.
+ -- generated item 16
+ +++ Processed value 225 after 0.52 sec.
+ -- generated item 16
+ +++ Processed value 256 after 0.66 sec.
+ -- generated item 17
+ -- generated item 17
+ +++ Processed value 256 after 0.95 sec.
+ -- generated item 18
+ +++ Processed value 289 after 0.89 sec.
+ +++ Processed value 289 after 1.04 sec.
+ -- generated item 18
+ +++ Processed value 324 after 1.20 sec.
+ -- generated item 19
+```
 ### Anatomy of an async method
 
 ![](./code_img/README-2022-06-15-22-39-47.png)
+
+
+## `uvloop`
+
+https://github.com/MagicStack/uvloop
+
+`uvloop` is a re-implementation of the `asyncio` event loop.
+
+Due to the way that Python works, the `async` `await` keyword can be used with different implementations of event loops. `uvloop` is one of those.
+
+`uvloop` makes `asyncio` 2-4x faster. 
+
+```
+$ python loops_asyncio/loop_program.py
+Running standard loop with 500,000 actions.
+App exiting, total time: 16.21 sec.
+
+$ python loops_uv/loop_program_uv.py
+Running standard loop with 500,000 actions.
+App exiting, total time: 11.32 sec.
+```
+
 
 
 # Multi-threaded parallelism
@@ -352,3 +422,7 @@ In summary, here is what we did:
 # Async web frameworks
 # Parallelism in C (with Cython)
 
+# Notes
+
+- Use `python3.10`
+- 
