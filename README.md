@@ -1,7 +1,34 @@
-# Course Link
-
-https://training.talkpython.fm/courses/details/async-in-python-with-threading-and-multiprocessing
-
+- [General](#general)
+- [Why Async and When?](#why-async-and-when)
+  - [Async for Performance/Speed](#async-for-performancespeed)
+  - [Note on upper bound for improvement](#note-on-upper-bound-for-improvement)
+  - [Async for Scalability](#async-for-scalability)
+  - [Async techniques in Python - The Landsacape](#async-techniques-in-python---the-landsacape)
+  - [Why threads don't perform in Python - The GIL](#why-threads-dont-perform-in-python---the-gil)
+- [async and await (`asyncio`) - Concurrency without threads, without subprocesses](#async-and-await-asyncio---concurrency-without-threads-without-subprocesses)
+  - [(Not) Typical Concurrent Programming](#not-typical-concurrent-programming)
+    - [I/O driven concurrency](#io-driven-concurrency)
+    - [Simple Fibonacci example](#simple-fibonacci-example)
+  - [The producer-consumer app](#the-producer-consumer-app)
+    - [Synchronous App](#synchronous-app)
+    - [Asynchronous App](#asynchronous-app)
+      - [The loop](#the-loop)
+      - [The Queue](#the-queue)
+      - [Tasks in the loop; and the final task](#tasks-in-the-loop-and-the-final-task)
+      - [async function](#async-function)
+      - [The beautiful thing about using `asyncio`](#the-beautiful-thing-about-using-asyncio)
+      - [Summary](#summary)
+    - [Anatomy of an async method](#anatomy-of-an-async-method)
+  - [`uvloop` - super easy performance gain](#uvloop---super-easy-performance-gain)
+  - [Let's do some real work.](#lets-do-some-real-work)
+- [Multi-threaded parallelism](#multi-threaded-parallelism)
+- [Thread Safety](#thread-safety)
+- [Multi-process parallelism](#multi-process-parallelism)
+- [Execution Pools](#execution-pools)
+- [Extending async patterns](#extending-async-patterns)
+- [Async web frameworks](#async-web-frameworks)
+- [Parallelism in C (with Cython)](#parallelism-in-c-with-cython)
+- [Notes](#notes)
 # General
 
 ![](./code_img/README-2022-06-08-17-14-52.png)
@@ -392,26 +419,91 @@ versus
 ![](./code_img/README-2022-06-15-22-39-47.png)
 
 
-## `uvloop`
+## `uvloop` - super easy performance gain
 
-https://github.com/MagicStack/uvloop
+> uvloop is a fast, drop-in replacement of the built-in asyncio event loop. uvloop is implemented in Cython and uses libuv under the hood.
+> *https://github.com/MagicStack/uvloop*
 
 `uvloop` is a re-implementation of the `asyncio` event loop.
 
-Due to the way that Python works, the `async` `await` keyword can be used with different implementations of event loops. `uvloop` is one of those.
+Due to the way that Python works, the `async` `await` keyword can be used with different implementations of event loops. `uvloop` is one of those. 
 
 `uvloop` makes `asyncio` 2-4x faster. 
 
+See here:
 ```
-$ python loops_asyncio/loop_program.py
+$ python loops/loops_asyncio/loop_program.py 
 Running standard loop with 500,000 actions.
-App exiting, total time: 16.21 sec.
 
-$ python loops_uv/loop_program_uv.py
+$ python loops/loops_uv/loop_program_uv.py 
 Running standard loop with 500,000 actions.
-App exiting, total time: 11.32 sec.
+App exiting, total time: 1.77 sec.  
 ```
 
+Let's inspect this program, implemented using `asyncio` event loop.
+```py
+$ bat loops/loops_asyncio/loop_program.py   
+       File: loops/loops_asyncio/loop_program.py
+   1   import datetime
+   2   import colorama
+   3   import asyncio
+   4   
+   5   
+   6   def main():
+   7       lim = 250_000
+   8       print(f"Running standard loop with {lim * 2:,} actions.")
+   9       t0 = datetime.datetime.now()
+  10   
+  11       # Changed this from the video due to changes in Python 3.10:
+  12       # DeprecationWarning: There is no current event loop, loop = asyncio.get_event_loop()
+  13       loop = asyncio.new_event_loop()
+  14   
+  15       data = asyncio.Queue()
+  16   
+  17       task1 = loop.create_task(generate_data(lim, data))
+  18       task3 = loop.create_task(generate_data(lim, data))
+  19       task2 = loop.create_task(process_data(2 * lim, data))
+  20   
+  21       final_task = asyncio.gather(task1, task2, task3)
+  22       loop.run_until_complete(final_task)
+  23   
+  24       dt = datetime.datetime.now() - t0
+  25       print(colorama.Fore.WHITE + f"App exiting, total time: {dt.total_seconds():,.2f} sec.", flush=True)
+  26   
+  27   
+  28   async def generate_data(num: int, data: asyncio.Queue):
+  29       for idx in range(1, num + 1):
+  30           item = idx * idx
+  31           await data.put((item, datetime.datetime.now()))
+  32           await asyncio.sleep(0)
+  33   
+  34   
+  35   async def process_data(num: int, data: asyncio.Queue):
+  36       processed = 0
+  37       while processed < num:
+  38           await data.get()
+  39           processed += 1
+  40           await asyncio.sleep(0)
+  41   
+  42   
+  43   if __name__ == '__main__':
+  44       main()    
+```
+
+We are not sleeping much (L32). Essentially, we are just telling the program to "give up" the time slice, let something else run, and immediately pick up and keep going. 
+
+We are doing this 250,000 times each task, so 1,000,000 times in total.
+
+Re-implementing this using `uvloop` event loop is relatively simple:
+```py
+import uvloop
+
+asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+```
+
+All you need to do is import `uvloop` into the module, and ask `asyncio` to use `uvloop` event loop implementation when creating event loop.
+
+## Let's do some real work.
 
 
 # Multi-threaded parallelism
