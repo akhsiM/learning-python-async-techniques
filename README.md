@@ -26,6 +26,13 @@
   - [Parallel programming with threads](#parallel-programming-with-threads)
   - [Choosing between threads and `asyncio`](#choosing-between-threads-and-asyncio)
   - [Hello threads](#hello-threads)
+  - [Something productive with threads](#something-productive-with-threads)
+    - [Quick Summary - Starting and Waiting on a thread](#quick-summary---starting-and-waiting-on-a-thread)
+    - [Tips for multiple threads](#tips-for-multiple-threads)
+    - [Cancelling threads with user input](#cancelling-threads-with-user-input)
+    - [WTF does `Thread.join()` do?](#wtf-does-threadjoin-do)
+    - [Timeouts pattern](#timeouts-pattern)
+  - [Attempting to leverage multiple cores with threads](#attempting-to-leverage-multiple-cores-with-threads)
 - [Thread Safety](#thread-safety)
 - [Multi-process parallelism](#multi-process-parallelism)
 - [Execution Pools](#execution-pools)
@@ -853,42 +860,255 @@ if __name__ == "__main__":
 
 If we want to create multiple threads, using **list comprehension** is a good approach to make code cleaner.
 ```python
-import threading
-import time
-
-
-def main():
-    threads = [
-        threading.Thread(target=greeter, args=("Michael", 10), daemon=True),
-        threading.Thread(target=greeter, args=("Sarah", 5), daemon=True),
-        threading.Thread(target=greeter, args=("Zoe", 2), daemon=True),
-        threading.Thread(target=greeter, args=("Mark", 11), daemon=True),
-    ]
-
-    [t.start() for t in threads]
-
-    print("This is other work.")
-    print(2 * 2)
-
-    [t.join() for t in threads]
-
-    print("Done.")
-
-
-def greeter(name: str, times: int):
-    for n in range(0, times):
-        print(f"{n}. Hello there {name}")
-        time.sleep(1)
-
-
-if __name__ == "__main__":
-    main()
+$ bat hello_threads/hello.py 
+       File: hello_threads/hello.py
+   1 ‾ import threading
+   2 + import time
+   3   
+   4   
+   5   def main():
+   6       threads = [
+   7           threading.Thread(target=greeter, args=("Michael", 10), daemon=True),
+   8           threading.Thread(target=greeter, args=("Sarah", 5), daemon=True),
+   9           threading.Thread(target=greeter, args=("Zoe", 2), daemon=True),
+  10           threading.Thread(target=greeter, args=("Mark", 11), daemon=True),
+  11       ]
+  12   
+  13       [t.start() for t in threads]
+  14   
+  15       print("This is other work.")
+  16       print(2 * 2)
+  17   
+  18 ~     [t.join() for t in threads]
+  19   
+  20       print("Done.")
+  21   
+  22   
+  23   def greeter(name: str, times: int):
+  24       for n in range(0, times):
+  25           print(f"{n}. Hello there {name}")
+  26           time.sleep(1)
+  27   
+  28   
+  29 ~ if __name__ == "__main__":
+  30       main()      
 ```
 
+One final thing is that we could set a time out here:
+```py
+  18 ~     [t.join(timeout=1) for t in threads]
+```
+
+Without the `timeout`, essentially we are waiting forever for the threads to finish. If we are willing to wait `1 second`, some threads may not finish:
+```
+$ python hello_threads/hello.py
+0. Hello there Michael
+0. Hello there Sarah
+0. Hello there Zoe
+0. Hello there Mark
+This is other work.
+4
+1. Hello there Michael
+1. Hello there Sarah
+1. Hello there Zoe
+1. Hello there Mark
+2. Hello there Michael
+2. Hello there Sarah
+2. Hello there Mark
+3. Hello there Michael
+Done.      
+```
+## Something productive with threads
+
+Let's come back to our producer-consumer example.
+
+This is the synchronous program:
+```py
+       File: basic_threads/sync_prod.py
+   1   import datetime
+   2   import colorama
+   3   import random
+   4   import time
+   5   
+   6   
+   7   def main():
+   8       t0 = datetime.datetime.now()
+   9       print(colorama.Fore.WHITE + "App started.", flush=True)
+  10       data = []
+  11   
+  12       generate_data(20, data)
+  13       generate_data(20, data)
+  14       process_data(40, data)
+  15   
+  16       dt = datetime.datetime.now() - t0
+  17       print(colorama.Fore.WHITE + f"App exiting, total time: {dt.total_seconds():,.2f} sec.", flush=True)
+  18   
+  19   
+  20   def generate_data(num: int, data: list):
+  21       for idx in range(1, num + 1):
+  22           item = idx * idx
+  23           data.append((item, datetime.datetime.now()))
+  24   
+  25           print(colorama.Fore.YELLOW + f" -- generated item {idx}", flush=True)
+  26           time.sleep(random.random() + .5)
+  27   
+  28   
+  29   def process_data(num: int, data: list):
+  30       processed = 0
+  31       while processed < num:
+  32           item = data.pop(0)
+  33           if not item:
+  34               time.sleep(.01)
+  35               continue
+  36   
+  37           processed += 1
+  38           value = item[0]
+  39           t = item[1]
+  40           dt = datetime.datetime.now() - t
+  41   
+  42           print(colorama.Fore.CYAN +
+  43                 f" +++ Processed value {value} after {dt.total_seconds():,.2f} sec.", flush=True)
+  44           time.sleep(.5)
+  45   
+  46   
+  47   if __name__ == '__main__':
+  48       main()  
+```
+
+Let's say we don't have `asyncio` to convert this to asynchronous programming. How would we model this with threads?
+
+Instead of...
+```py
+data = []
+
+generate_data(20, data)
+generate_data(20, data)
+process_data(40, data)
+```
+
+...we do:
+```py
+data = []
+
+threads = [
+    threading.Thread(target=generate_data, args=(20, data), daemon=True),
+    threading.Thread(target=generate_data, args=(20, data), daemon=True),
+    threading.Thread(target=process_data, args=(40, data), daemon=True),
+]
+
+[t.start() for t in threads]
 
 
+print("Started...")
 
+[t.join() for t in threads]
+```
 
+### Quick Summary - Starting and Waiting on a thread
+
+```python
+import threading
+
+def generate_data(num: int, inputs: list):
+    # normal synchronous code here
+
+# Create thread
+work = threading.Thread(target=generate_data, args=(20, []), daemon=True)
+
+# Start thread
+work.start()
+
+# Other work while generate_data is running...
+# Remember the Gil, so this work shouldn't be computational, but more i/o
+
+# Wait for completion
+work.join()
+```
+
+### Tips for multiple threads
+
+```py
+data = []
+
+threads = [
+    threading.Thread(target=generate_data, args=(20, data)),
+    threading.Thread(target=generate_data, args=(20, data)),
+    threading.Thread(target=process_data, args=(40, data)),
+]
+
+[t.start() for t in threads]
+
+[t.join() for t in threads]
+```
+
+### Cancelling threads with user input
+
+Let's say we want to give user the option to cancel the program by providing an input, while the program is running.
+
+We can do this by creating another thread:
+```py
+abort_thread = threading.Thread(target=check_cancel, daemon=True)
+abort_thread.start() 
+
+while any([t.is_alive() for t in threads]):
+    [t.join(.001) for t in threads]
+    if not abort_thread.is_alive():
+        print("Cancelling on your request!", flush=True)
+        break
+
+def check_cancel():
+    print(colorama.Fore.RED + "Press enter to cancel...", flush=True)
+    input()
+```
+
+Here, we are running a thread. This thread's task is simply to wait and watch if the user has pressed Enter. If Enter is pressed, the thread will exit.
+```py
+def check_cancel():
+    print(colorama.Fore.RED + "Press enter to cancel...", flush=True)
+    input()
+```
+
+While the other working threads are alive, we check if the `abort_thread` is alive or not. If it was not, then the loop is broken and the program exits.
+
+### WTF does `Thread.join()` do?
+
+The `.join()` operation asks the main program to wait for the thread to end before continuing. Without `join()`, the main program will end and the thread will continue.
+### Timeouts pattern
+
+```py
+threads = [
+    threading.Thread(target=generate_data, args=(20, data), daemon=True),
+    threading.Thread(target=generate_data, args=(20, data), daemon=True),
+    threading.Thread(target=process_data, args=(40, data), daemon=True),
+]
+
+[t.start() for t in threads]
+
+while any([t.is_alive() for t in threads]):
+    [t.join(0.001) for t in threads]
+    # Check whether we want to keep waiting...
+```
+
+Let's review this timeout operation. Here we have some threads, and we have started all the threads.
+
+What we'd like to do is, we want to let these threads run until they get some kind of signals (which could be anything, a boolean variable that is set to `True`, or a value set in the database, or an alert/email). When the signal arrives, we want to bail out of the threads.
+
+Small Note: So far we have been able to make the threads stop by simply letting the process exit. If this was a longer running process, such as a web service process that was alive for a long time, we'd have to abort the threads. Keep this in mind.
+
+```py
+while any([t.is_alive() for t in threads]):
+    [t.join(10) for t in threads]
+```
+
+So here we have a `while` loop and we are saying "while any of the thread is still working, we are going to do a quick join on them, and say.. hey let's wait for a little bit and then we are going to do our check".
+
+Then here we ask the question: Are you still alive? 
+
+So we are basically using join to put our threads to sleep. We could also do a `time.sleep()` here, but this one will cancel quicker if all of the threads are finished.
+
+This is a simple timeout pattern that we can use in Python threads.
+
+## Attempting to leverage multiple cores with threads
 
 # Thread Safety
 # Multi-process parallelism

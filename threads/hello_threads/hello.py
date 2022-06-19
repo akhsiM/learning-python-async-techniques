@@ -15,7 +15,7 @@ def main():
     print("This is other work.")
     print(2 * 2)
 
-    [t.join() for t in threads]
+    [t.join(timeout=1) for t in threads]
 
     print("Done.")
 
