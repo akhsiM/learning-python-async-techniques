@@ -23,6 +23,9 @@
   - [Let's do some real work - web scraping with `aiohttp`](#lets-do-some-real-work---web-scraping-with-aiohttp)
   - [Other async capable libraries](#other-async-capable-libraries)
 - [Threads & Multi-threaded parallelism](#threads--multi-threaded-parallelism)
+  - [Parallel programming with threads](#parallel-programming-with-threads)
+  - [Choosing between threads and `asyncio`](#choosing-between-threads-and-asyncio)
+  - [Hello threads](#hello-threads)
 - [Thread Safety](#thread-safety)
 - [Multi-process parallelism](#multi-process-parallelism)
 - [Execution Pools](#execution-pools)
@@ -736,6 +739,43 @@ Using threads is one of the main way to add concurrency to Python programs.
 
 ![](./code_img/README-2022-06-19-19-39-38.png)
 
+Because of Python's GIL, threads don't really let us leverage multiple cores to do actual concurrent CPU-bound operations. Again this is a Python limitation.
+
+So using threads is very similar to `asyncio` in that sense of "do more at once", in the async python landscape.
+
+![](./code_img/README-2022-06-19-19-41-18.png)
+
+## Parallel programming with threads
+
+![](./code_img/README-2022-06-19-19-44-35.png)
+
+This picture visualizes a process. This process can kick off different threads (grey arrows). We have our main programming running and then at some point kicks off two different threads, then it spends some time waiting for the threads to finish (broken lines) and then carries on working. 
+
+This is the fork-join pattern. Fork; then join.
+
+This fork join pattern is very common in threaded programming. It is important to realise that these threads are all working in the same process and share a common memory space of variables (memory heap).
+
+This is why in threaded programming, we need to take special care with shared variables and states.
+
+## Choosing between threads and `asyncio`
+
+Both of these live in the "Do more at once while we are waiting on something from an external system". This is in oppose to leveraging the computational power of our CPU.
+
+In some sense they are kind of doing the same thing. `asyncio` programming model however is nicer and cleaner. 
+
+The thing is, `asyncio` can only be used with other libraries that implement async methods. In other words, `asyncio` can only be used with libraries that support `asyncio`.
+
+Most libraries out there are not.
+
+So the thing with the GIL is that it prevents leveraging threads to be used for CPU-bound activities. The GIL only lets you perform one operation at a time. However, there is one important caveat. If we call a function that itself goes over the network, or talk to the file system, i.e any i/o operation, deep deep down in the implementation, **Python will let go of the GIL while it is waiting for the i/o operation**.
+
+So, as an example, let's say we have a library, like SQLAlchemy, a database ORM that talks to a database, but doesn't have `asyncio` support. However, simply because it **does** talk to a database, we could ask these database queries to work on multiple threads. As these operations go over the network, Python will release the GIL.
+
+So the takeaway is: use `asyncio` when you **can**, use threads when you **must**.
+
+Use `asyncio` if the support is there. Use threads when `asyncio` support isn't there, but you will have to do a bit more work to construct the tasks yourself.
+
+## Hello threads
 
 
 
