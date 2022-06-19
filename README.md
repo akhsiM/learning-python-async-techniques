@@ -20,8 +20,9 @@
       - [Summary](#summary)
     - [Anatomy of an async method](#anatomy-of-an-async-method)
   - [`uvloop` - super easy performance gain](#uvloop---super-easy-performance-gain)
-  - [Let's do some real work.](#lets-do-some-real-work)
-- [Multi-threaded parallelism](#multi-threaded-parallelism)
+  - [Let's do some real work - web scraping with `aiohttp`](#lets-do-some-real-work---web-scraping-with-aiohttp)
+  - [Other async capable libraries](#other-async-capable-libraries)
+- [Threads & Multi-threaded parallelism](#threads--multi-threaded-parallelism)
 - [Thread Safety](#thread-safety)
 - [Multi-process parallelism](#multi-process-parallelism)
 - [Execution Pools](#execution-pools)
@@ -503,10 +504,241 @@ asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 
 All you need to do is import `uvloop` into the module, and ask `asyncio` to use `uvloop` event loop implementation when creating event loop.
 
-## Let's do some real work.
+## Let's do some real work - web scraping with `aiohttp`
+
+In `asyncio/web_scraping/sync_scrape/program.py`, we are scraping the HTML and title of some HTML pages.
+
+```py
+$ python web_scraping/sync_scrape/program.py     
+Getting HTML for episode 150
+Getting TITLE for episode 150
+Title found: Technical Lessons Learned from Pythonic Refactoring
+Getting HTML for episode 151
+Getting TITLE for episode 151
+Title found: Gradual Typing of Production Applications
+Getting HTML for episode 152
+Getting TITLE for episode 152
+Title found: Understanding and using Python's AST
+Getting HTML for episode 153
+Getting TITLE for episode 153
+Title found: How Python Evolves
+Getting HTML for episode 154
+Getting TITLE for episode 154
+Title found: Python in Biology and Genomics
+Getting HTML for episode 155
+Getting TITLE for episode 155
+Title found: Practical steps for moving to Python 3
+Getting HTML for episode 156
+Getting TITLE for episode 156
+Title found: Python History and Perspectives
+Getting HTML for episode 157
+Getting TITLE for episode 157
+Title found: The Journal of Open Source Software
+Getting HTML for episode 158
+Getting TITLE for episode 158
+Title found: Quantum Computing and Python
+Getting HTML for episode 159
+Getting TITLE for episode 159
+Title found: Inside the new PyPI launch
+Done in 9.68 sec.  
+```
+
+Let's convert this synchronous function to run asynchronously.
+
+First, in order for us to start writing async code, we need to implement a library that actually supports `asyncio`. These are libraries that have asynhronous methods and code routines that we can `await`.
+
+For our example, let's look at `aiohttp`, to be implemented in place of `requests`.
+
+Here are the packages we need:
+```
+asyncio
+asyncdns
+cchardet
+```
+
+Let's have a stab:
+```py
+import asyncio
+import datetime
+
+import aiohttp
+import bs4
+from colorama import Fore
 
 
-# Multi-threaded parallelism
+async def get_html(episode_number: int) -> str:
+    print(Fore.YELLOW + f"Getting HTML for episode {episode_number}", flush=True)
+
+    url = f"https://talkpython.fm/{episode_number}"
+
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as resp:
+            resp.raise_for_status()
+            return await resp.text()
+
+
+def get_title(html: str, episode_number: int) -> str:
+    print(Fore.CYAN + f"Getting TITLE for episode {episode_number}", flush=True)
+    soup = bs4.BeautifulSoup(html, "html.parser")
+    header = soup.select_one("h1")
+    if not header:
+        return "MISSING"
+
+    return header.text.strip()
+
+
+def main():
+    t0 = datetime.datetime.now()
+
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(get_title_range())
+
+    dt = datetime.datetime.now() - t0
+    print(f"Done in {dt.total_seconds():.2f} sec.")
+
+
+async def get_title_range():
+    # Please keep this range pretty small to not DDoS my site. ;)
+    for n in range(150, 160):
+        html = await get_html(n)
+        title = get_title(html, n)
+        print(Fore.WHITE + f"Title found: {title}", flush=True)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+The `async with` is an extension of Python's existing context manager.
+
+When we run this program, there is no improvement in speed..
+```
+$ python web_scraping/async_scrape/program.py
+/home/kkennynguyen/deve/async-techniques-python/asyncio/web_scraping/async_scrape/program.py:33: DeprecationWarning: There is no current event loop
+  loop = asyncio.get_event_loop()
+Getting HTML for episode 150
+Getting TITLE for episode 150
+Title found: Technical Lessons Learned from Pythonic Refactoring
+Getting HTML for episode 151
+Getting TITLE for episode 151
+Title found: Gradual Typing of Production Applications
+Getting HTML for episode 152
+Getting TITLE for episode 152
+Title found: Understanding and using Python's AST
+Getting HTML for episode 153
+Getting TITLE for episode 153
+Title found: How Python Evolves
+Getting HTML for episode 154
+Getting TITLE for episode 154
+Title found: Python in Biology and Genomics
+Getting HTML for episode 155
+Getting TITLE for episode 155
+Title found: Practical steps for moving to Python 3
+Getting HTML for episode 156
+Getting TITLE for episode 156
+Title found: Python History and Perspectives
+Getting HTML for episode 157
+Getting TITLE for episode 157
+Title found: The Journal of Open Source Software
+Getting HTML for episode 158
+Getting TITLE for episode 158
+Title found: Quantum Computing and Python
+Getting HTML for episode 159
+Getting TITLE for episode 159
+Title found: Inside the new PyPI launch
+Done in 9.53 sec.  
+```
+
+Why? Look here:
+```py
+async def get_title_range():
+    # Please keep this range pretty small to not DDoS my site. ;)
+    for n in range(150, 160):
+        html = await get_html(n)
+        title = get_title(html, n)
+        print(Fore.WHITE + f"Title found: {title}", flush=True)
+
+```
+
+We are only doing one thing at a time. What we want is to **start all the requests**, and THEN process the responses as they come in.
+
+Let's re-implement this:
+```py
+async def get_title_range():
+    tasks = []
+
+    # Start ALL the requests at once
+    for n in range(150, 160):
+        tasks.append((n, asyncio.create_task(get_html(n))))
+
+    # Process all the requests, as they come in
+    for n, t in tasks:
+        html = await t
+        title = get_title(html, n)
+        print(Fore.WHITE + f"Title found: {title}", flush=True)
+```
+
+```
+$ python web_scraping/async_scrape/program.py
+/home/kkennynguyen/deve/async-techniques-python/asyncio/web_scraping/async_scrape/program.py:33: DeprecationWarning: There is no current event loop
+  loop = asyncio.get_event_loop()
+Getting HTML for episode 150
+Getting HTML for episode 151
+Getting HTML for episode 152
+Getting HTML for episode 153
+Getting HTML for episode 154
+Getting HTML for episode 155
+Getting HTML for episode 156
+Getting HTML for episode 157
+Getting HTML for episode 158
+Getting HTML for episode 159
+Getting TITLE for episode 150
+Title found: Technical Lessons Learned from Pythonic Refactoring
+Getting TITLE for episode 151
+Title found: Gradual Typing of Production Applications
+Getting TITLE for episode 152
+Title found: Understanding and using Python's AST
+Getting TITLE for episode 153
+Title found: How Python Evolves
+Getting TITLE for episode 154
+Title found: Python in Biology and Genomics
+Getting TITLE for episode 155
+Title found: Practical steps for moving to Python 3
+Getting TITLE for episode 156
+Title found: Python History and Perspectives
+Getting TITLE for episode 157
+Title found: The Journal of Open Source Software
+Getting TITLE for episode 158
+Title found: Quantum Computing and Python
+Getting TITLE for episode 159
+Title found: Inside the new PyPI launch
+Done in 1.36 sec.  
+```
+
+The performance improvement here is pretty crazy. 
+
+One important note is that if the number of tasks that we launch is significantly higher, we might want to implement some sort of rate-limitting, not to let the tasks get out of control.
+
+## Other async capable libraries
+
+If we want to take advantage of asynchronous programming, it is critical that the libraries that we are using, to talk to various external systems, provide asynchronous methods. 
+
+![](./code_img/README-2022-06-19-19-28-25.png)
+
+- `aiofiles` for file system. This library enables starting asynchronous job streams for read/write operation of system files.
+- `umongo` enables asynchronous operations when interacting with MongoDB. It is a very cool library that is feature rich.
+- `asyncpg` is a fast PostgreSQL database client library.
+- `asyncio-redis` can be used with Redis, which in turn is normally used for in-memory cache.
+
+# Threads & Multi-threaded parallelism
+
+Using threads is one of the main way to add concurrency to Python programs.
+
+![](./code_img/README-2022-06-19-19-39-38.png)
+
+
+
+
 # Thread Safety
 # Multi-process parallelism
 # Execution Pools
