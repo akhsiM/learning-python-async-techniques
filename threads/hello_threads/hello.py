@@ -1,5 +1,5 @@
-import time
 import threading
+import time
 
 
 def main():
@@ -15,7 +15,7 @@ def main():
     print("This is other work.")
     print(2 * 2)
 
-    [t.join(timeout=1) for t in threads]
+    [t.join() for t in threads]
 
     print("Done.")
 
@@ -26,5 +26,5 @@ def greeter(name: str, times: int):
         time.sleep(1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

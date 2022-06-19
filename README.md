@@ -777,6 +777,117 @@ Use `asyncio` if the support is there. Use threads when `asyncio` support isn't 
 
 ## Hello threads
 
+Let's write a simple program:
+```py
+$ bat hello_threads/simple.py 
+       File: hello_threads/simple.py
+   1   import time
+   2   import threading
+   3   
+   4   def main():
+   5       t = threading.Thread(target=greeter, args=("Misha", 100))
+   6       t.start()
+   7       print("Done.")
+   8   
+   9   def greeter(name: str, times:int):
+  10       for _ in range(0, times):
+  11           print("Hello there {}".format(name))
+  12           time.sleep(1)
+  13   
+  14   if __name__ == '__main__':
+  15       main()
+```
+```sh
+$ python hello_threads/simple.py
+Hello there Misha
+Done.
+Hello there Misha
+Hello there Misha
+Hello there Misha
+Hello there Misha
+...
+```
+
+As demonstrated above, the main main method/program has exited. However, somehow, the other thread is still running doing its things.
+
+That is because on default, threads in Python are **foreground** threads. If any of those are running, even if the main thread has exited, those threads will still continue to run.
+
+If we want the threads to stop once the main method has exited, we need to run those threads in background mode by adding `daemon=True`:
+```py
+5     t = threading.Thread(target=greeter, args=("Misha", 100), daemon=True)
+```
+```
+$ python hello_threads/simple.py 
+Hello there Misha
+Done. 
+```
+
+Continuing on...
+```py
+import threading
+import time
+
+
+def main():
+    t = threading.Thread(target=greeter, args=("Misha", 100), daemon=True)
+    t.start()
+
+    print("This is some other work.")
+    print(5 * 5)
+
+    t.join()  # this is the JOIN operation in fork join pattern
+
+    print("Done.")
+
+
+def greeter(name: str, times: int):
+    for _ in range(0, times):
+        print("Hello there {}".format(name))
+        time.sleep(1)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+
+If we want to create multiple threads, using **list comprehension** is a good approach to make code cleaner.
+```python
+import threading
+import time
+
+
+def main():
+    threads = [
+        threading.Thread(target=greeter, args=("Michael", 10), daemon=True),
+        threading.Thread(target=greeter, args=("Sarah", 5), daemon=True),
+        threading.Thread(target=greeter, args=("Zoe", 2), daemon=True),
+        threading.Thread(target=greeter, args=("Mark", 11), daemon=True),
+    ]
+
+    [t.start() for t in threads]
+
+    print("This is other work.")
+    print(2 * 2)
+
+    [t.join() for t in threads]
+
+    print("Done.")
+
+
+def greeter(name: str, times: int):
+    for n in range(0, times):
+        print(f"{n}. Hello there {name}")
+        time.sleep(1)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+
+
+
 
 
 # Thread Safety
