@@ -34,6 +34,14 @@
     - [Timeouts pattern](#timeouts-pattern)
   - [Attempting to leverage multiple cores with threads](#attempting-to-leverage-multiple-cores-with-threads)
 - [Thread Safety](#thread-safety)
+  - [The need for thread safety](#the-need-for-thread-safety)
+  - [Demo: An unsafe bank](#demo-an-unsafe-bank)
+    - [The Unsafe Bank](#the-unsafe-bank)
+  - [Safe Bank with a coarse-grained **global** lock](#safe-bank-with-a-coarse-grained-global-lock)
+  - [Safe Bank with a fine-grained lock](#safe-bank-with-a-fine-grained-lock)
+    - [Fixing the Deadlock](#fixing-the-deadlock)
+    - [Takeaways from fine-grained lock](#takeaways-from-fine-grained-lock)
+  - [Summary of Basic Thread Safety](#summary-of-basic-thread-safety)
 - [Multi-process parallelism](#multi-process-parallelism)
 - [Execution Pools](#execution-pools)
 - [Extending async patterns](#extending-async-patterns)
@@ -1119,17 +1127,22 @@ Done in 4.38 sec.
 ```
 
 ```py
-12       # do_math(num=30000000)
-13       print(f"Doing math on {multiprocessing.cpu_count():,} processors.")
-14   
 15       processor_count = multiprocessing.cpu_count()
 16       threads = []
-17       for n in range(1, processor_count + 1):
-18           threads.append(Thread(target=do_math,
-19                                 args=(30_000_000 * (n - 1) / processor_count,
-20                                       30_000_000 * n / processor_count),
-21                                 daemon=True)
-22                          )
+17   
+18       # partition the computation work across multiple threads
+19       for n in range(1, processor_count + 1):
+20           threads.append(Thread(target=do_math,
+21                                 args=(30_000_000 * (n - 1) / processor_count,
+22                                       30_000_000 * n / processor_count),
+23                                 daemon=True)
+24                          )
+25   
+26       [t.start() for t in threads]
+27       [t.join() for t in threads]
+28   
+29       dt = datetime.datetime.now() - t0
+30       print(f"Done in {dt.total_seconds():,.2f} sec.")
 ```
 
 ```
@@ -1138,11 +1151,451 @@ Doing math on 12 processors.
 Done in 5.12 sec.  
 ```
 
-Here is an example of where the GIL is raising its head. Regardless of how many threads are running, the interpreter is only going to process one instruction at a time.
+Here is a concrete example of where the GIL is raising its head. Regardless of how many threads are running, the interpreter is only going to process one instruction at a time.
 
-So, computation-intensive problems like these cannot be solved using threads.
+So, computation-intensive problems like these cannot be solved using Python threads. If we were using other languages, using threads for these would make the program run a lot faster.
+
+In conclusion, threads cannot be used to speed up computationally intensive programs. For those, we'd need to use multiprocessing or C/ Cython.
+
+![](./code_img/README-2022-06-28-15-18-14.png)
 
 # Thread Safety
+
+No conversation about threads is complete without the mentioning about the topic of thread safety.
+
+Once we work with threads, we take on a whole new level of responsibility and we need to think about several types of problems. The goal is to prevent things like race conditions or data corruption in our program.
+
+Threads require *explicit** safety measures.
+
+The errors that we encounter when threading are extremely difficult to track down in real programs. They are super frustrating. 
+
+Why? They depend on timing, and on hardware and specific loading conditions. Often they have to do with one part of the system getting in-sync or out-of-sync with another part of the system. When we attach a debugger to figure out what's going on, or when we are investigating using our local machine, without the extra load, maybe those specific conditions wouldn't re-create themselves.
+
+So, this is why we need to be especially careful when using threads.
+
+## The need for thread safety
+
+Let's think about the state of a program as we call an individual function.
+
+As per illustrated below, the black box represents a function call. The blue shapes on the right are data structures. We have two pointers, one to a class, that holds another class that points at a speficic item in a list. The other pointer holds the list.
+
+![](./code_img/README-2022-06-28-15-26-39.png)
+
+Blue represents a healthy, valid state. In most situations, if the program was to stop, it would be in a valid state.
+ 
+However, during the execution of the program, sometimes it evolves into an invalid state temporarily. This cannot be helped with.
+
+The problem with threading is that we'd have more than one instance of these programs running at the same time. If they share a data structure, we'd have a threading bug.
+
+![](./code_img/README-2022-06-28-15-34-12.png)
+
+The goal of thread safety is to prevent other parts of the program interact with the part of data that's being worked on, while the program is in a temporary invalid state. Essentially, we'd isolate the temporarily invalidated state until it becomes validated again. Then we'd allow all the threads to interact with it.
+
+## Demo: An unsafe bank
+
+### The Unsafe Bank
+
+```py
+8   class Account:
+9       def __init__(self, balance=0):
+10           self.balance = balance
+11   
+12   
+13   def main():
+14       accounts = create_accounts()
+15       total = sum(a.balance for a in accounts)
+16   
+17       validate_bank(accounts, total)
+18       print("Starting transfers...")
+```
+
+Let's say we create a bunch of bank accounts and transfer money between them. One of the property of this setting is that the `total` amount of money in all the banks should remain the same. Under no circumstances should this `total` be changed.
+
+Then, we kick off a bunch of threads to `do_bank_stuff`. We also pass in the `total` figure so that it can be validated during the operation.
+```py
+20       jobs = [
+21           Thread(target=do_bank_stuff, args=(accounts, total)),
+22           Thread(target=do_bank_stuff, args=(accounts, total)),
+23           Thread(target=do_bank_stuff, args=(accounts, total)),
+24           Thread(target=do_bank_stuff, args=(accounts, total)),
+25           Thread(target=do_bank_stuff, args=(accounts, total)),
+26       ]
+...
+39   def do_bank_stuff(accounts, total):
+40       for _ in range(1, 10000):
+41           a1, a2 = get_two_accounts(accounts)
+42           amount = random.randint(1, 100)
+43           do_transfer(a1, a2, amount)
+44           validate_bank(accounts, total, quiet=True)
+45   
+...
+58   def do_transfer(from_account: Account, to_account: Account, amount: int):
+59       if from_account.balance < amount:
+60           return
+61   
+62       from_account.balance -= amount
+63       time.sleep(.000) # give up the current time slice
+64       to_account.balance += amount
+65   
+```
+
+```
+$ python unsafe_bank.py 
+All good: Consistent account balance: $44,500
+Starting transfers...
+ERROR: Inconsistent account balance: $44,460 vs $44,500
+ERROR: Inconsistent account balance: $44,421 vs $44,500
+ERROR: Inconsistent account balance: $44,437 vs $44,500
+ERROR: Inconsistent account balance: $44,402 vs $44,500
+ERROR: Inconsistent account balance: $44,437 vs $44,500
+ERROR: Inconsistent account balance: $44,402 vs $44,500
+ERROR: Inconsistent account balance: $44,458 vs $44,500
+ERROR: Inconsistent account balance: $44,495 vs $44,500
+ERROR: Inconsistent account balance: $44,426 vs $44,500
+ERROR: Inconsistent account balance: $44,402 vs $44,500
+ERROR: Inconsistent account balance: $44,426 vs $44,500
+ERROR: Inconsistent account balance: $44,426 vs $44,500
+ERROR: Inconsistent account balance: $44,426 vs $44,500
+ERROR: Inconsistent account balance: $44,495 vs $44,500
+ERROR: Inconsistent account balance: $44,479 vs $44,500
+ERROR: Inconsistent account balance: $44,409 vs $44,500
+ERROR: Inconsistent account balance: $44,494 vs $44,500
+ERROR: Inconsistent account balance: $44,418 vs $44,500
+ERROR: Inconsistent account balance: $44,409 vs $44,500
+ERROR: Inconsistent account balance: $44,423 vs $44,500
+ERROR: Inconsistent account balance: $44,429 vs $44,500
+ERROR: Inconsistent account balance: $44,487 vs $44,500
+ERROR: Inconsistent account balance: $44,464 vs $44,500
+ERROR: Inconsistent account balance: $44,452 vs $44,500
+ERROR: Inconsistent account balance: $44,478 vs $44,500
+ERROR: Inconsistent account balance: $44,469 vs $44,500
+ERROR: Inconsistent account balance: $44,416 vs $44,500
+ERROR: Inconsistent account balance: $44,408 vs $44,500
+ERROR: Inconsistent account balance: $44,458 vs $44,500
+ERROR: Inconsistent account balance: $44,427 vs $44,500
+ERROR: Inconsistent account balance: $44,446 vs $44,500
+ERROR: Inconsistent account balance: $44,482 vs $44,500
+ERROR: Inconsistent account balance: $44,482 vs $44,500
+ERROR: Inconsistent account balance: $44,482 vs $44,500
+ERROR: Inconsistent account balance: $44,482 vs $44,500
+ERROR: Inconsistent account balance: $44,451 vs $44,500
+ERROR: Inconsistent account balance: $44,416 vs $44,500
+ERROR: Inconsistent account balance: $44,492 vs $44,500
+ERROR: Inconsistent account balance: $44,483 vs $44,500
+ERROR: Inconsistent account balance: $44,412 vs $44,500
+ERROR: Inconsistent account balance: $44,434 vs $44,500
+ERROR: Inconsistent account balance: $44,411 vs $44,500
+ERROR: Inconsistent account balance: $44,478 vs $44,500
+Transfers complete (0.21) sec
+All good: Consistent account balance: $44,500  
+```
+
+Hmm, if we had disabled threading and use only one thread, the problem would go away:
+```sh
+$ python unsafe_bank.py
+All good: Consistent account balance: $44,500
+Starting transfers...
+Transfers complete (0.04) sec
+All good: Consistent account balance: $44,500 
+```
+
+So, this program is not thread-safe.
+```py
+20       jobs = [
+21           Thread(target=do_bank_stuff, args=(accounts, total)),
+22           Thread(target=do_bank_stuff, args=(accounts, total)),
+23           Thread(target=do_bank_stuff, args=(accounts, total)),
+24           Thread(target=do_bank_stuff, args=(accounts, total)),
+25           Thread(target=do_bank_stuff, args=(accounts, total)),
+26       ]
+```
+
+What's happening is this:
+- One of the threads is coming along and transferring money from A to B. It might be half-way through, i.e the money would be out of A, but not yet into B.
+- Another thread may have just finished a transfer, and call `validate()`. It would see the invalid state that the other thread has created, and it shoots out an error.
+- Eventually, the first thread puts the state of the program **back** into a valid state.
+- However, at the end, everything seems fine.
+
+## Safe Bank with a coarse-grained **global** lock
+
+Let's use the various constructs that Python provides to make the unsafe bank safe.
+
+First, instead of using:
+```py
+from threading import Thread
+```
+
+.. we want to use:
+```py
+from threading import RLock
+```
+
+*(There are two types of locks in Python. `Lock` is the more low-level one. `RLock` or re-entrant lock means the thread itself can re-enter the lock many times, as long as it exits the lock as many times as it does.)*
+
+Then, we need to fix the problem in `do_transfer`:
+```py
+58   transfer_lock = RLock()
+59   
+60   
+61   def do_transfer(from_account: Account, to_account: Account, amount: int):
+62       if from_account.balance < amount:
+63           return
+64   
+65       # Not so good:
+66       # transfer_lock.acquire()
+67       #
+68       # from_account.balance -= amount
+69       # time.sleep(.000)
+70       # to_account.balance += amount
+71       #
+72       # transfer_lock.release()
+73   
+74       # good!
+75       with transfer_lock:
+76           from_account.balance -= amount
+77           time.sleep(.000)
+78           to_account.balance += amount
+```
+
+First, we create our `transfer_lock`. Then we can use the lock using either of the following two patterns.
+
+- The not so good way: We first acquire the lock, then release it. However, in reality, we'd need to put our logic into a `try-finally` block like so:
+```py
+transfer_lock.acquire()
+try:
+    # do things
+except:
+    # catch 
+finally:
+    transfer_lock.release()
+```
+Here's the tricky bit: If there was an exception from a higher level that was caught, we'd never get to `transfer_lock.release()` and the program would be in deadlock and we'd never get to this function again.
+
+- The good way:
+```py
+75       with transfer_lock:
+76           from_account.balance -= amount
+77           time.sleep(.000)
+78           to_account.balance += amount
+79   
+```
+
+Let's run this program again:
+```sh
+$ python safe_bank.py
+All good: Consistent account balance: $44,500
+Starting transfers...
+Transfers complete (0.32) sec
+All good: Consistent account balance: $44,500    
+```
+
+Essentially, we are making sure that anytime our program is going to move into an invalid state, all the other threads are told not to touch the state until the work on the state is over.
+
+The program did take a bit longer (0.32s vs 0.21s).
+
+There is one more bug in our program. In the `validate_bank` function, we are also interacting with the account:
+```py
+def validate_bank(accounts: List[Account], total: int, quiet=False):
+    current = sum(a.balance for a in accounts)
+    ...
+```
+
+We need to put a lock here too. The idea is that anytime we interact with the accounts, we have to also take the lock, **assuming** that the operations will happen concurrently.
+
+```py
+def validate_bank(accounts: List[Account], total: int, quiet=False):
+    with transfer_lock:
+        current = sum(a.balance for a in accounts)
+    ...
+```
+
+The program will run a bit slower due to the reduced concurrency. 
+```
+$ python safe_bank.py
+All good: Consistent account balance: $44,500
+Starting transfers...
+Transfers complete (0.40) sec
+All good: Consistent account balance: $44,500  
+```
+
+## Safe Bank with a fine-grained lock
+
+Up until this point, the safe bank currently uses a single coarse-grained **global** lock. What that means is, even if we had 50 threads doing `do_transfer()` between thousands of accounts, every single transfer is going to have to slow down and wait for the single-threaded processing pipeline due to us taking a lock on the entire process.
+
+We may think that what we could do is to somehow come up with a lock for various accounts, instead of using the same lock for every transfer. That means two transfers between two accounts could be done in parallel without any problem.
+
+In theory, this means that we could gain a lot of parallelism using a fine-grained lock.
+
+This is, however, a bad idea that is not only bad performance-wise, but also makes the program much more complex.
+
+Let's experiment with this, to see.
+
+First, within each account that is being used in the transfer, we want to be able to take out a lock. 
+```py
+class Account:
+    def __init__(self, balance=0):
+        self.balance = balance
+        self.lock = RLock()
+```
+
+Then, within each of the two accounts in the transfer, we take a out a lock at the same time before we can do transfer between any two accounts. 
+```py
+def do_transfer(from_account: Account, to_account: Account, amount: int):
+    if from_account.balance < amount:
+        return
+
+    with from_account.lock:
+        with to_account.lock:
+            from_account.balance -= amount
+            time.sleep(.000)
+            to_account.balance += amount
+```
+
+When we run this program, it would be stuck..
+```
+$ python safe_bank_fine_grained.py
+All good: Consistent account balance: $44,500
+Starting transfers...
+
+```
+
+If we were to monitor our system activity, we'd find that the process isn't using any CPU. It is not doing anything apart from just sitting idle.
+![](./code_img/README-2022-06-28-16-31-52.png)
+
+
+Let's put in some debugging print:
+```py
+def do_transfer(from_account: Account, to_account: Account, amount: int):
+    if from_account.balance < amount:
+        return
+
+    print("taking first lock..")
+    with from_account.lock:
+        print("taking second lock...")
+        with to_account.lock:
+            from_account.balance -= amount
+            time.sleep(0.000)
+            to_account.balance += amount
+        print("released second lock...")
+    print("released first lock...")
+```
+
+Let's see:
+```
+$ python safe_bank_fine_grained.py
+All good: Consistent account balance: $44,500
+Starting transfers...
+taking first lock..
+taking second lock...
+taking first lock..
+taking second lock...
+released second lock...
+taking first lock..
+released first lock...
+released second lock...
+taking first lock..
+taking second lock...
+released first lock...
+taking first lock..
+```
+
+So.. we **never** got to taking the second lock after the last first lock taken. What's happening here? 
+
+Let's consider this scenario. We have two transfers happening. Transfer 1 goes from A->B. Transfer 2 goes from B->A. What would happen is that both transfer would take its first lock, but stuck at taking the second lock, waiting indefinitely for the lock on the other thread to be released. Both of these, however, would release their first lock. These threads are in what we'd call a **deadlock** situation.
+
+There is also another problem with the `validate_bank` function, where we are only taking out one lock:
+```py
+    with transfer_lock:
+        current = sum(a.balance for a in accounts)
+```
+
+Now, we can't do that.. We have to 
+```py
+    [a.lock.acquire() for a in accounts]
+    current = sum(a.balance for a in accounts)
+    [a.lock.release() for a in accounts]
+```
+
+### Fixing the Deadlock
+
+Fundamentally, the problem we are having is that different threads could take first a lock on A, then B while another thread could go B then A. It is the order of this lock acquisation that is the problem.
+
+Let's say, if we could guarantee that all locks on A would be taken first, and then B, regardless whether they are `from_account` or `to_account`, that would solve our problem. Essentially, what we need to do is add some **ordering** to the lock aquisition process.
+
+We could do this by using the python `id()` function to get the memory address of the pointer.
+```
+>>> variable = 123
+>>> another_variable = 321
+>>> id(variable)
+139843497791536
+>>> id(another_variable)
+139843490992208
+```
+
+```py
+def do_transfer(from_account: Account, to_account: Account, amount: int):
+    if from_account.balance < amount:
+        return
+
+    lock1, lock2 = (
+        (from_account.lock, to_account.lock)
+        if id(from_account) < id(to_account)
+        else (to_account.lock, from_account.lock)
+    )
+
+    with lock1:
+        with lock2:
+            from_account.balance -= amount
+            time.sleep(0.000)
+            to_account.balance += amount  
+```
+
+No more deadlock:
+```
+$ python safe_bank_fine_grained.py
+All good: Consistent account balance: $44,500
+Starting transfers...
+Transfers complete (0.80) sec
+All good: Consistent account balance: $44,500    
+```
+
+However, the program isn't faster... It's actually worse because of this block:
+```py
+def validate_bank(accounts: List[Account], total: int, quiet=False):
+    [a.lock.acquire() for a in sorted(accounts, key=lambda x: id(x))]
+    current = sum(a.balance for a in accounts)
+    [a.lock.release() for a in accounts]
+```
+
+### Takeaways from fine-grained lock 
+
+Taking fine-grained lock isn't always bad. We just need to think about what we want to do.
+
+Most importantly, if we were taking two locks from two different things, we have to make sure to always take them **in the same order**, to avoid deadlocks.
+
+```py
+lock1, lock2 = (
+    (from_account.lock, to_account.lock)
+    if id(from_account) < id(to_account)
+    else (to_account.lock, from_account.lock)
+)
+```
+*(Note: Figure out a way to sort out the order.)*
+
+A deadlock is a very, very shit place to be.
+
+## Summary of Basic Thread Safety
+
+```py
+import threading
+
+the_lock = threading.RLock()
+# Always use Rlock() over Lock()
+
+with the_lock:
+    # do potentially unsafe operation(s)
+```
+
 # Multi-process parallelism
 # Execution Pools
 # Extending async patterns
