@@ -3,7 +3,7 @@
   - [Async for Performance/Speed](#async-for-performancespeed)
   - [Note on upper bound for improvement](#note-on-upper-bound-for-improvement)
   - [Async for Scalability](#async-for-scalability)
-  - [Async techniques in Python - The Landsacape](#async-techniques-in-python---the-landsacape)
+  - [Landscape of Async techniques in Python](#landscape-of-async-techniques-in-python)
   - [Why threads don't perform in Python - The GIL](#why-threads-dont-perform-in-python---the-gil)
 - [async and await (`asyncio`) - Concurrency without threads, without subprocesses](#async-and-await-asyncio---concurrency-without-threads-without-subprocesses)
   - [(Not) Typical Concurrent Programming](#not-typical-concurrent-programming)
@@ -129,7 +129,7 @@ How would we do this at the lower level? During the database trip one request, w
 
 ![](./code_img/README-2022-06-08-18-49-20.png)
 
-## Async techniques in Python - The Landsacape
+## Landscape of Async techniques in Python
 
 There are many different techniques that we'll go through in this course, and these can be applied in different situations. Each technique has their own pros and cons.
 
