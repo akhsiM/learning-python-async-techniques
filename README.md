@@ -1110,6 +1110,38 @@ This is a simple timeout pattern that we can use in Python threads.
 
 ## Attempting to leverage multiple cores with threads
 
+Up until this point we have established that thread usage belongs more in the "do more at once" camp, not "do things faster".
+
+Let's try to see if we can leverage a multiple core system to speed up a computation-intensive program.
+```sh
+$ python cpu_attempt/compute_it.py 
+Done in 4.38 sec.
+```
+
+```py
+12       # do_math(num=30000000)
+13       print(f"Doing math on {multiprocessing.cpu_count():,} processors.")
+14   
+15       processor_count = multiprocessing.cpu_count()
+16       threads = []
+17       for n in range(1, processor_count + 1):
+18           threads.append(Thread(target=do_math,
+19                                 args=(30_000_000 * (n - 1) / processor_count,
+20                                       30_000_000 * n / processor_count),
+21                                 daemon=True)
+22                          )
+```
+
+```
+$ python cpu_attempt/compute_threaded.py 
+Doing math on 12 processors.
+Done in 5.12 sec.  
+```
+
+Here is an example of where the GIL is raising its head. Regardless of how many threads are running, the interpreter is only going to process one instruction at a time.
+
+So, computation-intensive problems like these cannot be solved using threads.
+
 # Thread Safety
 # Multi-process parallelism
 # Execution Pools
