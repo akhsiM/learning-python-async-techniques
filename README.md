@@ -43,7 +43,15 @@
     - [Takeaways from fine-grained lock](#takeaways-from-fine-grained-lock)
   - [Summary of Basic Thread Safety](#summary-of-basic-thread-safety)
 - [Multi-process parallelism](#multi-process-parallelism)
+  - [Overview](#overview)
+  - [Example](#example)
+    - [Result](#result)
+  - [Core Concept - Scaling CPU-bound operations](#core-concept---scaling-cpu-bound-operations)
+  - [Returning Values](#returning-values)
+    - [Core Concept of returning values with `multiprpcessing`](#core-concept-of-returning-values-with-multiprpcessing)
 - [Execution Pools](#execution-pools)
+  - [Comparison: multithreading vs multiprocessing api](#comparison-multithreading-vs-multiprocessing-api)
+  - [Executor app](#executor-app)
 - [Extending async patterns](#extending-async-patterns)
 - [Async web frameworks](#async-web-frameworks)
 - [Parallelism in C (with Cython)](#parallelism-in-c-with-cython)
@@ -1597,7 +1605,116 @@ with the_lock:
 ```
 
 # Multi-process parallelism
+
+## Overview
+
+![](./code_img/README-2022-06-29-22-09-38.png)
+
+`multiprocessing` is very similar to `threads`, or the threading programming model. However with `multiprocessing`, each operation runs as an entirely separate Python process. 
+
+`multiprocessing` bypasses the GIL by kicking off new Python processes with their own GIL that don't talk to one another.
+
+## Example
+
+This is the running of a program running threaded mode. It is doing some computational work (the details aren't super important).
+
+```sh
+$ python multiprocessing/compute_threaded.py
+Doing math on 12 processors.
+Done in 6.33 sec.
+```
+
+Let's convert this program to multiprocess programming.
+
+First, we don't need the list of threads.
+```py
+    threads = []
+```
+
+We use `pool` instead. If we don't pass anything into `Pool()`, it will use by default up to `multiprocessing.cpu_count()` amount of cores.
+```py
+pool = multiprocessing.Pool()
+```
+
+Then, we call `apply_async()` from the `Pool` object.
+```py
+        task = pool.apply_async(do_math, (30_000_000 * (n - 1) / processor_count,
+                                          30_000_000 * n / processor_count))
+```
+
+So this is actually going to start the work. We don't need to call `start()` on anything.
+
+We then call `pool.close()` to say that no more work is coming. Then we call `pool.join()`, similarly to how we also have to join the threads.
+### Result
+
+```sh
+$ python multiprocessing/compute_multiprocessing.py
+Doing math on 12 processors.
+Done in 2.57 sec.
+```
+
+BAM! This is a dramatic improvement.
+
+## Core Concept - Scaling CPU-bound operations
+
+```py
+from multiprocessing.pool import Pool
+```
+
+First, we start by creating a new `Pool` instance:
+```py
+pool = Pool(processes=4)
+```
+
+Then, we start the work by calling `apply_sync()`
+```py
+pool.apply_sync(func=do_match, args=(0,100))
+pool.apply_sync(func=do_match, args=(101,200))
+pool.apply_sync(func=do_match, args=(201,300))
+pool.apply_sync(func=do_match, args=(301,400))
+```
+
+Then, we have to call `close()` and then `join()`.
+
+Important thing to remember is that this programming model will kick off separate Python processes that have their own GILs. This bypasses the individual GIL's restriction.
+
+## Returning Values
+
+We can capture the return values:
+```py
+    tasks = []
+    for n in range(1, processor_count + 1):
+        task = pool.apply_async(do_math, (30_000_000 * (n - 1) / processor_count,
+                                          30_000_000 * n / processor_count))
+        tasks.append(task)
+```
+
+Then, we can `get()` the result:
+```py
+    for t in tasks:
+        print(t.get())
+```
+### Core Concept of returning values with `multiprpcessing`
+
+![](./code_img/README-2022-06-29-22-49-27.png)
+
 # Execution Pools
+
+Let's talk about unifying the APIs of `threads` and `multiprocessing`. Although their APIs are different, it would be great if we could have a unified version of them two.
+
+![](./code_img/README-2022-06-29-22-52-50.png)
+
+Let's blur the middle line separating these two. What if sometimes we want to use threading, and sometimes we also want to use multiprocessing to get around the GIL.
+
+## Comparison: multithreading vs multiprocessing api
+
+![](./code_img/README-2022-06-29-22-54-15.png)
+
+## Executor app
+  
+Starting with the synchronous programming version, in the main module we have the `get_title` function.
+
+
 # Extending async patterns
 # Async web frameworks
 # Parallelism in C (with Cython)
