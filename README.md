@@ -52,6 +52,9 @@
 - [Execution Pools](#execution-pools)
   - [Comparison: multithreading vs multiprocessing api](#comparison-multithreading-vs-multiprocessing-api)
   - [Executor app](#executor-app)
+  - [Executor app (threaded edition)](#executor-app-threaded-edition)
+  - [Executor app (multi-process edition)](#executor-app-multi-process-edition)
+  - [Summary/ Concept](#summary-concept)
 - [Extending async patterns](#extending-async-patterns)
 - [Async web frameworks](#async-web-frameworks)
 - [Parallelism in C (with Cython)](#parallelism-in-c-with-cython)
@@ -1706,14 +1709,299 @@ Let's talk about unifying the APIs of `threads` and `multiprocessing`. Although 
 
 Let's blur the middle line separating these two. What if sometimes we want to use threading, and sometimes we also want to use multiprocessing to get around the GIL.
 
+What if we just want to use either threading or multiprocessing, whichever fitting?
+
 ## Comparison: multithreading vs multiprocessing api
 
 ![](./code_img/README-2022-06-29-22-54-15.png)
 
 ## Executor app
-  
-Starting with the synchronous programming version, in the main module we have the `get_title` function.
+ 
+This is a simple program that involves going to a list of URLs and getting the first `h1` element on the page. This is done using the `get_title()` function
 
+Starting with the synchronous programming version:
+```py
+import bs4
+import requests
+
+
+def main():
+    urls = [
+        "https://talkpython.fm",
+        "https://pythonbytes.fm",
+        "https://google.com",
+        "https://realpython.com",
+        "https://training.talkpython.fm/",
+    ]
+
+    work = []
+
+    for url in urls:
+        print(
+            "Getting title from {}".format(url.replace("https", "")),
+            end="... ",
+            flush=True,
+        )
+        title = get_title(url)
+
+        print("{}".format(title), flush=True)
+    print("Done", flush=True)
+
+
+def get_title(url: str) -> str:
+    import multiprocessing
+
+    process = multiprocessing.current_process()
+    print(
+        "Getting title from {}, PID: {}, ProcName: {}".format(
+            url.replace("https://", ""), process.pid, process.name
+        ),
+        flush=True,
+    )
+
+    resp = requests.get(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.13; rv:61.0) "
+            "Gecko/20100101 Firefox/61.0"
+        },
+    )
+    resp.raise_for_status()
+
+    html = resp.text
+
+    soup = bs4.BeautifulSoup(html, features="html.parser")
+    tag: bs4.Tag = soup.select_one("h1")
+
+    if not tag:
+        return "NONE"
+
+    if not tag.text:
+        a = tag.select_one("a")
+        if a and a.text:
+            return a.text
+        elif a and "title" in a.attrs:
+            return a.attrs["title"]
+        else:
+            return "NONE"
+
+    return tag.get_text(strip=True)
+
+
+def get_title(url: str) -> str:
+    resp = requests.get(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.13; rv:61.0) "
+            "Gecko/20100101 Firefox/61.0"
+        },
+    )
+    resp.raise_for_status()
+
+    html = resp.text
+
+    soup = bs4.BeautifulSoup(html, features="html.parser")
+    tag: bs4.Tag = soup.select_one("h1")
+    if not tag:
+        return "NONE"
+
+    if not tag.text:
+        a = tag.select_one("a")
+        if a and a.text:
+            return a.text
+        elif a and "title" in a.attrs:
+            return a.attrs["title"]
+        else:
+            return "NONE"
+
+    return tag.get_text(strip=True)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+This program took around 5s to run..
+```
+$ python execution_pool/program.py
+Getting title from ://talkpython.fm... Talk Python To Me
+Getting title from ://pythonbytes.fm... Python Bytes Podcast
+Getting title from ://google.com... NONE
+Getting title from ://realpython.com... Real Python Tutorials
+Getting title from ://training.talkpython.fm/... Talk Python Training
+Done
+```
+
+## Executor app (threaded edition)
+
+```py
+from concurrent.futures import Future
+from concurrent.futures.thread import ThreadPoolExecutor as PoolExecutor
+
+import bs4
+import requests
+
+
+def main():
+    urls = [
+        "https://talkpython.fm",
+        "https://pythonbytes.fm",
+        "https://google.com",
+        "https://realpython.com",
+        "https://training.talkpython.fm/",
+    ]
+
+    work = []
+
+    with PoolExecutor() as executor:
+        for url in urls:
+            f: Future = executor.submit(get_title, url)
+            work.append(f)
+
+        print("Waiting for downloads...", flush=True)
+
+    print("Done", flush=True)
+
+    for f in work:
+        print(f"{f.result()}", flush=True)
+
+
+def get_title(url: str) -> str:
+    print(
+        "Getting title from {}".format(url.replace("https", "")),
+        flush=True,
+    )
+    resp = requests.get(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.13; rv:61.0) "
+            "Gecko/20100101 Firefox/61.0"
+        },
+    )
+    resp.raise_for_status()
+
+    html = resp.text
+
+    soup = bs4.BeautifulSoup(html, features="html.parser")
+    tag: bs4.Tag = soup.select_one("h1")
+
+    if not tag:
+        return "NONE"
+
+    if not tag.text:
+        a = tag.select_one("a")
+        if a and a.text:
+            return a.text
+        elif a and "title" in a.attrs:
+            return a.attrs["title"]
+        else:
+            return "NONE"
+
+    return tag.get_text(strip=True)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+This new program took 1.3s to run
+```
+$ python execution_pool/program.py
+Getting title from ://talkpython.fm
+Getting title from ://pythonbytes.fm
+Getting title from ://google.com
+Getting title from ://realpython.com
+Getting title from ://training.talkpython.fm/
+Waiting for downloads...
+Done
+Talk Python To Me
+Python Bytes Podcast
+NONE
+Real Python Tutorials
+Talk Python Training                                                                      
+```
+
+We can add some debugging statement to inspect the process that the execution runs within:
+```py
+def get_title(url: str) -> str:
+    import multiprocessing
+
+    process = multiprocessing.current_process()
+
+    print(
+        "Getting title from {}, PID: {}, ProcName: {}".format(
+            url.replace("https://", ""), process.pid, process.name
+        ),
+        flush=True,
+    )
+...
+```
+```
+$ python execution_pool/program.py
+Waiting for downloads...
+Getting title from talkpython.fm, PID: 47585, ProcName: MainProcess
+Getting title from pythonbytes.fm, PID: 47585, ProcName: MainProcess
+Getting title from google.com, PID: 47585, ProcName: MainProcess
+Getting title from realpython.com, PID: 47585, ProcName: MainProcess
+Getting title from training.talkpython.fm/, PID: 47585, ProcName: MainProcess
+Done
+Talk Python To Me
+Python Bytes Podcast
+NONE
+Real Python Tutorials
+Talk Python Training
+```
+
+Notice that the Process is always the same. This is the main process. This indicates that the execution ran on multiple threads of the main process.
+
+## Executor app (multi-process edition)
+
+Let's switch this program onto multiprocessing mode.
+
+We only need to change one single line:
+```py
+from concurrent.futures import Future
+
+# from concurrent.futures.thread import ThreadPoolExecutor as PoolExecutor
+from concurrent.futures.process import ProcessPoolExecutor as PoolExecutor
+
+import bs4
+import requests
+...
+```
+
+```
+$ python execution_pool/program.py
+Waiting for downloads...
+Getting title from talkpython.fm, PID: 47993, ProcName: SpawnProcess-2
+Getting title from pythonbytes.fm, PID: 47992, ProcName: SpawnProcess-1
+Getting title from google.com, PID: 47994, ProcName: SpawnProcess-3
+Getting title from realpython.com, PID: 47995, ProcName: SpawnProcess-4
+Getting title from training.talkpython.fm/, PID: 47996, ProcName: SpawnProcess-5
+Done
+Talk Python To Me
+Python Bytes Podcast
+NONE
+Real Python Tutorials
+Talk Python Training
+```
+
+This time, the process ID is different for each one of the execution.
+
+One single line. That is ALL it took to change a program from threaded execution to multiprocess execution!
+
+## Summary/ Concept
+
+Although the threading API and the multiprocessing API are not the same in Python, it would be nice if somehow we could call them the same way, so that we can simply switch one to another easily.
+
+Enters the execution pool/ executor:
+![](./code_img/README-2022-06-30-22-12-59.png)
+
+We simply instantiate an executor and use it as a context manager. Inside the `with` block, we can simply create a bunch of asynchronous work.
+
+Out side of the `with` block, the asynchronous work is done.
+
+This is a bit simpler than having to `close()` the thread.
 
 # Extending async patterns
 # Async web frameworks

@@ -20,16 +20,13 @@ def main():
 
     with PoolExecutor() as executor:
         for url in urls:
-            # print("Getting title from {}".format(url.replace('https', '')),
-            #       end='... ',
-            #       flush=True)
-            # title = get_title(url)
             f: Future = executor.submit(get_title, url)
             work.append(f)
 
         print("Waiting for downloads...", flush=True)
 
     print("Done", flush=True)
+
     for f in work:
         print(f"{f.result()}", flush=True)
 
@@ -37,14 +34,14 @@ def main():
 def get_title(url: str) -> str:
     import multiprocessing
 
-    p = multiprocessing.current_process()
+    process = multiprocessing.current_process()
+
     print(
         "Getting title from {}, PID: {}, ProcName: {}".format(
-            url.replace("https://", ""), p.pid, p.name
+            url.replace("https://", ""), process.pid, process.name
         ),
         flush=True,
     )
-
     resp = requests.get(
         url,
         headers={
