@@ -12,7 +12,7 @@
   - [The producer-consumer app](#the-producer-consumer-app)
     - [Synchronous App](#synchronous-app)
     - [Asynchronous App](#asynchronous-app)
-      - [The loop](#the-loop)
+      - [Event loop](#event-loop)
       - [The Queue](#the-queue)
       - [Tasks in the loop; and the final task](#tasks-in-the-loop-and-the-final-task)
       - [async function](#async-function)
@@ -56,6 +56,13 @@
   - [Executor app (multi-process edition)](#executor-app-multi-process-edition)
   - [Summary/ Concept](#summary-concept)
 - [Extending async patterns](#extending-async-patterns)
+  - [Why do we need additional libraries?](#why-do-we-need-additional-libraries)
+  - [`unsync`](#unsync)
+    - [Demo: unsync app introduction](#demo-unsync-app-introduction)
+      - [Using `unsync`](#using-unsync)
+    - [`unsync` programming concept](#unsync-programming-concept)
+  - [`trio`](#trio)
+    - [Cancellation with `trio`](#cancellation-with-trio)
 - [Async web frameworks](#async-web-frameworks)
 - [Parallelism in C (with Cython)](#parallelism-in-c-with-cython)
 - [Notes](#notes)
@@ -283,14 +290,14 @@ There are a couple of things we need to do to make a program asynchronous.
 
 Syntactically simple but conceptually complex.
 
-#### The loop
+#### Event loop
 
-In order to run asynchronous code routine, we can't just call them like a normal function. We have to call them in an asyncio loop. That asyncio loop is going to execute on whatever thread or environment that we started on. It is **our** job to create and run that loop.
+In order to run asynchronous code routine, we can't just call them like a normal function. We have to call them in an asyncio **event loop**. This `asyncio` loop is going to execute on whatever thread or environment that we started on. It is **our** job to create and run that loop.
 ```py
 loop = asyncio.new_event_loop()
 ```
 
-Later on, this loop is set to run until complete
+Later on, this loop is set to run until complete:
 ```py
     loop.run_until_complete(something_we_need_to_pass_in)
 ```
@@ -302,18 +309,18 @@ We also need to change the type of data that we need to use. Right now we have a
 data = []
 ```
 
+We can use a list. But `asyncio` has a way to deal with this better:
+
 #### The Queue
 
-We can use a list. But `asyncio` has a way to deal with this better.
+We can use a list. However, A queue is better. Something goes in something comes out. FIFO.
 ```py
 data = asyncio.Queue()
 ```
 
-A queue is cool. Something goes in something comes out. FIFO.
-
 A queue allows us to wait and tell `asyncio` to continue doing other work, until something comes in this queue, then wakes up/ resume the code routine and get it running.
 
-Wih this new `Queue` type, we also change the way we interact with it. `append` is now `put` and `pop` is new `get`.
+Wih this new `Queue` type, we also change the way we interact with it. `append()` is now `put()` and `pop()` is new `get()`.
 
 Then, we are going to kick the execution of `generate_data` and `process_data` separately together, then put it to `run_until_complete()`.
 
@@ -1734,8 +1741,6 @@ def main():
         "https://training.talkpython.fm/",
     ]
 
-    work = []
-
     for url in urls:
         print(
             "Getting title from {}".format(url.replace("https", "")),
@@ -1746,46 +1751,6 @@ def main():
 
         print("{}".format(title), flush=True)
     print("Done", flush=True)
-
-
-def get_title(url: str) -> str:
-    import multiprocessing
-
-    process = multiprocessing.current_process()
-    print(
-        "Getting title from {}, PID: {}, ProcName: {}".format(
-            url.replace("https://", ""), process.pid, process.name
-        ),
-        flush=True,
-    )
-
-    resp = requests.get(
-        url,
-        headers={
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.13; rv:61.0) "
-            "Gecko/20100101 Firefox/61.0"
-        },
-    )
-    resp.raise_for_status()
-
-    html = resp.text
-
-    soup = bs4.BeautifulSoup(html, features="html.parser")
-    tag: bs4.Tag = soup.select_one("h1")
-
-    if not tag:
-        return "NONE"
-
-    if not tag.text:
-        a = tag.select_one("a")
-        if a and a.text:
-            return a.text
-        elif a and "title" in a.attrs:
-            return a.attrs["title"]
-        else:
-            return "NONE"
-
-    return tag.get_text(strip=True)
 
 
 def get_title(url: str) -> str:
@@ -1994,16 +1959,347 @@ One single line. That is ALL it took to change a program from threaded execution
 
 Although the threading API and the multiprocessing API are not the same in Python, it would be nice if somehow we could call them the same way, so that we can simply switch one to another easily.
 
-Enters the execution pool/ executor:
+This is exactly what Execution Pool can be used for!
 ![](./code_img/README-2022-06-30-22-12-59.png)
 
-We simply instantiate an executor and use it as a context manager. Inside the `with` block, we can simply create a bunch of asynchronous work.
+We simply instantiate an executor and use it as a context manager. Inside the `with` block, we can simply create a bunch of asynchronous work and submit them to the executor.
 
 Out side of the `with` block, the asynchronous work is done.
 
 This is a bit simpler than having to `close()` the thread.
 
 # Extending async patterns
+
+In this section we are going to learn about libraries that are built on top of `async` and `await`. These are two libraries that are specifically built as frameworks for creating asynchronous programs. They themselves use `asyncio`, and `async` and `await` under their hoods.
+
+These libraries are `unsync` and `trio`.
+
+`unsync` uses all `multiprocessing`, `threads` and is also primarily built on `asyncio`. `trio` is built entirely on `asyncio`.
+
+With these two libraries, we can **both** do **more at once**, as well as **do things faster**.
+
+The nice things about these libraries is that they let us developers do things from both of the Python async camp with relative ease.
+
+## Why do we need additional libraries?
+
+- One of the annoying thing about `asyncio` is that we have to have an event loop. Executing an async function outside of an existing even loop can be troublesome in a complex application.
+- `asyncio.Future` is not thread safe. Remember that `asyncio` doesn't work on multiple threads because of the GIL, it is an event loop on a single thread.
+- Pool Executors from `concurrent.futures` cannot be directly awaited, so they cannot be used with `asyncio`.
+    ```py
+    from concurrent.futures.thread import ThreadPoolExecutor
+    from concurrent.futures.process import ProcessPoolExecutor
+    ```
+- `Future.result()` is a blocking operation even within an event loop. If we were doing it within an event loop, we could clog up the event loop, which would cause a deadlock.
+- `asyncio.Future.result()` will throw an exception if the future is not done. 
+- async functions always execute in an `asyncio` loop. They don't run in threads not processing mode.
+- Cancellation and timeouts are tricky in threads and processes.
+- Thread local storage doesn't work for asyncio concurrency because `asyncio` doesn't actually use multiple threads. It a single thread. *(Thread local storage refers to a concept similar to "global variable", where each thread has its own local value for that global data. It's kinda like in `flask` and `django` where we just have access to the `request` object throughout our whole view.)*
+-  Testing concurrent code can be very tricky.
+
+Overalls, these additional libraries provide a unified layer on top of the complex mix of different async paradigms. They bring a cleaner programming API interface for certain things that they are designed to do, such as coordination, parent-child task.
+
+## `unsync`
+
+`unsync` is largely inspired by the C# implementation of async and await, in TPL (Task Parallel Library), which is much nicer than Python's.
+
+The way that `unsync` can be used is that we can just put an `@unsync` decorator on top of an `async` method.
+```py
+@unsync
+async def unsync_async():
+    await asyncio.sleep(0)
+    return 'I like decorator'
+
+print(unsync_async().result())
+```
+
+Then we can continue to work with it using simplified techniques that `unsync` make available for us.
+
+For example, we can do things such as:
+- Fire and Forget", where `unsync` does all the event loop acquisition and running behind the scene. The event loop it uses is **not** the usual event loop, `unsync` makes its own in a **new thread** whose sole purpose is to execute `unsync` functions.
+- Blocking calls to `result()`,  that is a "massup", or unifies things between `asyncio.Future` and `concurrent.Future`. There is also some added protection to deadlock *(normally calls to `future.result()` are usually blocking, except in `unsync` ambient event loop thread where it will throw an exception to avoid deadlock)*.
+
+`unsync` also introduces a new concept of Future, called `Unfuture`. 
+
+`unsync` is also super compact. Here is its [entire implementation](https://github.com/alex-sherman/unsync/blob/master/unsync/unsync.py), which is essentially reframing the different APIs within a file. It is quite special.
+
+
+### Demo: unsync app introduction
+
+First, let's take a look at the app we are going to write code for, implemented in three different ways:
+```
+built_on_asyncio/the_unsync
+├── nosync.py           # no parallelism whatsoever
+├── presync.py          # uses asyncio
+└── thesync.py          # starts out using asyncio, then unsync
+```
+
+Within this app, we have these different functions
+
+- First, the CPU bound operation:
+    ```py
+    def compute_some():
+        print("Computing...")
+        for _ in range(1, 10_000_000):
+            math.sqrt(25 ** 25 + .01)
+    ```
+- Two similar functions that uses HTTP request under the hood:
+    - The first one isn't async enabled:
+    ```py
+    def download_some():
+        print("Downloading...")
+        url = 'https://talkpython.fm/episodes/show/174/coming-into-python-from-another-industry-part-2'
+        resp = requests.get(url)
+        resp.raise_for_status()
+
+        text = resp.text
+
+        print(f"Downloaded (more) {len(text):,} characters.")
+    ```
+    - The second one will use `aiohttp` as its HTTP client:
+    ```py
+    def download_some_more():
+        ...
+    ```
+    **This means that the first function is better done with `threads`, and the second one should be used with `asyncio`.**
+- Lastly, a function that lets us to to wait by going to sleep a thousand time for a total period of roughly one second:
+    ```py
+    def wait_some():
+        print("Waiting...")
+        for _ in range(1, 1000):
+            time.sleep(.001)
+    ```
+
+First, let's run the synchronous program:
+```
+$ python built_on_asyncio/the_unsync/nosync.py 
+Computing...
+Computing...
+Computing...
+Downloading...
+Downloaded (more) 24,037 characters.
+Downloading...
+Downloaded (more) 24,037 characters.
+Downloading more ...
+Downloaded 25,459 characters.
+Downloading more ...
+Downloaded 25,459 characters.
+Waiting...
+Waiting...
+Waiting...
+Waiting...
+Synchronous version done in 10.54 seconds.    
+```
+
+Then, let's look at **presync.py**. 
+
+All that is done here is taking as much advantage of `asyncio` as possible. 
+
+There will be no benefit for `compute_some()` because this function is purely computational and there is no waitability here.
+
+`download_some()` will benefit from `asyncio` because it uses `aiohttp.ClientSession`. `download_some_more()` won't, because we are imagining that we can't use `asyncio` to improve this function, and that it can only be improved by threading.
+
+```
+$ python built_on_asyncio/the_unsync/presync.py 
+Computing...
+Computing...
+Computing...
+Downloading...
+Downloading...
+Downloading more ...
+Downloaded 25,459 characters.
+Downloading more ...
+Downloaded 25,459 characters.
+Waiting...
+Waiting...
+Waiting...
+Waiting...
+Downloaded (more) 24,037 characters.
+Downloaded (more) 24,037 characters.
+Synchronous version done in 6.33 seconds.  
+```
+
+There is definitely some improvements here.
+
+#### Using `unsync`
+
+First, we import the module
+```py
+from unsync import unsync
+```
+
+We don't actually need to create an event loop. Instead, `unsync` will create an ambient loop that serves this running program for us.
+```py
+# loop = asyncio.new_event_loop()
+```
+
+Then, we want to just call our functions like we would regular functions, without having to use the event loop to create them:
+```py
+#    tasks = [
+#        loop.create_task(compute_some()),
+#        loop.create_task(compute_some()),
+#        loop.create_task(compute_some()),
+#        loop.create_task(download_some()),
+#        loop.create_task(download_some()),
+#        loop.create_task(download_some_more()),
+#        loop.create_task(download_some_more()),
+#        loop.create_task(wait_some()),
+#        loop.create_task(wait_some()),
+#        loop.create_task(wait_some()),
+#        loop.create_task(wait_some()),
+#    ]
+
+    tasks = [
+        compute_some(),
+        compute_some(),
+        compute_some(),
+        download_some(),
+        download_some(),
+        download_some_more(),
+        download_some_more(),
+        wait_some(),
+        wait_some(),
+        wait_some(),
+        wait_some(),
+    ]
+```
+
+Then, we need to get the results back:
+```py
+[t.result() for t in tasks]
+```
+
+We also need to add the `@unsync` decorator to our functions.
+- If the `@unsync` decorator needs to be appied to an async function, it is going to run in the (hidden) ambient `unsync` event loop.
+- If the `@unsync` decorator is applied to a regular non-async function, `unsync` will run this function on a thread, not on an `asyncio` loop.
+- We can tell `unsync` that a function is `cpu_bound` by: `@unsync(cpu_bound=True)`. When we do this, the function will be run on multiprocessing.
+
+```
+$ python built_on_asyncio/the_unsync/thesync.py   
+Computing...
+Downloading...
+Downloading...
+Computing...
+Computing...
+Downloading more ...
+Downloading more ...
+Waiting...
+Waiting...
+Waiting...
+Waiting...
+Downloaded 25,459 characters.
+Downloaded (more) 24,037 characters.
+Downloaded 25,459 characters.
+Downloaded (more) 24,037 characters.
+Synchronous version done in 1.61 seconds.  
+```
+
+That is `unsync` in a nutshell.
+
+### `unsync` programming concept
+
+`unsync` helps us deal with programs that use mixed mode parallelism, which can be very complicated to write:
+```py
+loop = asyncio.get_event_loop()
+
+tasks = [
+    loop.create_task(compute_some()),       # multiprocess?
+    loop.create_task(download_some()),      # asyncio? 
+    loop.create_task(download_some_more()), # thread?
+    loop.create_task(wait_some())           # asyncio?
+]
+
+loop.run_until_complete(asyncio.gather(*tasks))
+```
+
+Here comes `unsync`:
+
+```py
+tasks = [
+    compute_some(),         # multiprocess
+    download_some(),        # asyncio
+    download_some_more(),   # thread
+    wait_some()             # asyncio
+]
+
+[t.result() for t in tasks]
+
+@unsync(cpu_bound=True)
+def compute_some() ...
+
+@unsync()
+async def download_some(): ...
+
+@unsync()
+def download_some_more(): ...
+```
+
+We don't know or care about whether a function uses multiprocessing, thread, or `asyncio` at all. All we want is that we want those functions to actually just work and do their own things in the best ways that they can.
+
+## `trio` 
+
+`trio` is another library that is built on top of `asyncio` to make it easier, simpler and nicer to deal with.
+
+It is important to note that `trio` is built entirely from the ground up  and integrates with `asyncio`, but it doesn't directly use `asyncio`. We actually have to use a bridging library `trio-asyncio` with `trio`.
+
+To demonstrate this, we are going back to the producer-consumer app example.
+
+Starting from `prod_asyncio.py`, we are going to convert this into `trio`. 
+
+First, we need to open a "memory channel", with a `max_buffer_size` that indicates how many tasks that can be added to this "queue".
+```py
+send_channel, receive_channel = trio.open_memory_channel(max_buffer_size=10)
+```
+
+*(Prior to `v0.11.0`, `trio.MemorySendChannel` were `trio.Queue`.)*
+
+Then, in `trio` the main context manager that we interact with is a `nursery`. A `nursery` spawns children tasks.
+```py
+async with trio.open_nursery() as nursery:
+    nursery.start_soon(generate_data, 20, send_channel, name="Prod 1")
+    nursery.start_soon(generate_data, 20, send_channel, name="Prod 2")
+    nursery.start_soon(process_data, 40, send_channel, name="Consumer")
+```
+
+### Cancellation with `trio`
+
+We can ask the `trio` nursery to run only for either five seconds or less.
+```py
+wtih trio.move_on_after(5):
+    async with trio.open_nursery() as nursery:
+        nursery.start_soon(generate_data, 20, send_channel, name="Prod 1")
+        nursery.start_soon(generate_data, 20, send_channel, name="Prod 2")
+        nursery.start_soon(process_data, 40, send_channel, name="Consumer")
+```
+
+With this, if the tasks take longer than five seconds to run, they will be cancelled.
+```py
+$ python prod_trio.py 
+App started.
+ -- generated item 1
+ -- generated item 1
+ +++ Processed value 1 after 0.00 sec.
+ +++ Processed value 1 after 0.50 sec.
+ -- generated item 2
+ -- generated item 2
+ +++ Processed value 4 after 0.26 sec.
+ +++ Processed value 4 after 0.62 sec.
+ -- generated item 3
+ +++ Processed value 9 after 0.30 sec.
+ -- generated item 3
+ -- generated item 4
+ +++ Processed value 9 after 0.36 sec.
+ +++ Processed value 16 after 0.73 sec.
+ -- generated item 4
+ +++ Processed value 16 after 0.03 sec.
+ -- generated item 5
+ +++ Processed value 25 after 0.47 sec.
+ -- generated item 5
+ -- generated item 6
+ +++ Processed value 25 after 0.46 sec.
+App exiting, total time: 5.00 sec.   
+```
+
+
 # Async web frameworks
 # Parallelism in C (with Cython)
 
