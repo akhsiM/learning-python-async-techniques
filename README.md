@@ -1982,6 +1982,8 @@ The nice things about these libraries is that they let us developers do things f
 
 ## Why do we need additional libraries?
 
+TL;DR: It's because async can be quite complex in Python..
+
 - One of the annoying thing about `asyncio` is that we have to have an event loop. Executing an async function outside of an existing even loop can be troublesome in a complex application.
 - `asyncio.Future` is not thread safe. Remember that `asyncio` doesn't work on multiple threads because of the GIL, it is an event loop on a single thread.
 - Pool Executors from `concurrent.futures` cannot be directly awaited, so they cannot be used with `asyncio`.
@@ -1996,7 +1998,7 @@ The nice things about these libraries is that they let us developers do things f
 - Thread local storage doesn't work for asyncio concurrency because `asyncio` doesn't actually use multiple threads. It a single thread. *(Thread local storage refers to a concept similar to "global variable", where each thread has its own local value for that global data. It's kinda like in `flask` and `django` where we just have access to the `request` object throughout our whole view.)*
 -  Testing concurrent code can be very tricky.
 
-Overalls, these additional libraries provide a unified layer on top of the complex mix of different async paradigms. They bring a cleaner programming API interface for certain things that they are designed to do, such as coordination, parent-child task.
+Overalls, these additional libraries provide a unified layer on top of the complex mix of different async paradigms, frameworks and libraries. They bring a cleaner programming API interface for certain things that they are designed to do, such as coordination, parent-child task.
 
 ## `unsync`
 
@@ -2298,7 +2300,6 @@ App started.
  +++ Processed value 25 after 0.46 sec.
 App exiting, total time: 5.00 sec.   
 ```
-
 
 # Async web frameworks
 # Parallelism in C (with Cython)
