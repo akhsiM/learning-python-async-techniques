@@ -1,6 +1,8 @@
 # Web framework requirements
-flask
-
+# flask
+quart
 
 # Calling services requirements
-requests
+aiohttp
+aiodns
+cchardet

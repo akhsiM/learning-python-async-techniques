@@ -66,6 +66,8 @@
 - [Async web](#async-web)
   - [Difference in Latency](#difference-in-latency)
   - [The App](#the-app)
+  - [`quart`](#quart)
+  - [The Conversion](#the-conversion)
 - [Parallelism in C (with Cython)](#parallelism-in-c-with-cython)
 - [Notes](#notes)
 # General
@@ -2343,7 +2345,21 @@ This is a simple API that returns the weather and sun positions to a request tha
 
 One thing to note is that Flask actually does not support any async capability, whatsoever, at all. *(This is as at 2018.)*
 
+## `quart`
 
+As at the time this tutorial was written, Flask does not support async any capability. This is where `quart` comes in.
+
+Just like Flask, `quart` is a microframework based on asyncio. It also has very nice compability with flask. 
+
+This means that converting a Flask app into quart requires minimal work
+
+## The Conversion
+
+
+
+Apart from the higher level chang of library call from `flask` to `quart`, we also need to go down to the low level service calls and transform the synchronous functions into asynchronous programming mode.
+
+This means changing `requests` call to `aiohttp`.
 
 # Parallelism in C (with Cython)
 
