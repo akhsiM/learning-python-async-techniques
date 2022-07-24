@@ -63,7 +63,9 @@
     - [`unsync` programming concept](#unsync-programming-concept)
   - [`trio`](#trio)
     - [Cancellation with `trio`](#cancellation-with-trio)
-- [Async web frameworks](#async-web-frameworks)
+- [Async web](#async-web)
+  - [Difference in Latency](#difference-in-latency)
+  - [The App](#the-app)
 - [Parallelism in C (with Cython)](#parallelism-in-c-with-cython)
 - [Notes](#notes)
 # General
@@ -2301,7 +2303,48 @@ App started.
 App exiting, total time: 5.00 sec.   
 ```
 
-# Async web frameworks
+# Async web 
+
+Web API is one of those key places that `asyncio` really shines. This is because in web API you are either calling a database, or calling another web API, or doing a little bit of computation work to send that HTML/JSON back to the client. Most of the time is spent on waiting.
+
+This is set completely on the "Do more at once"/ scalability camp.
+![](./code_img/README-2022-07-24-21-29-52.png)
+
+
+## Difference in Latency
+
+This is web API in synchronous execution:
+![](./code_img/README-2022-07-24-21-32-41.png)
+
+Although `asyncio` cannot make things run faster specifically, it does reduce latency hell of a lot. 
+![](./code_img/README-2022-07-24-21-33-09.png)
+
+## The App
+
+We are going to take a Flask App, and transform it into asynchronous mode of operation.
+
+```
+async_web
+├── acityscape_api
+│   ├── app.py
+│   ├── config
+│   ├── requirements.txt
+│   ├── services
+│   └── views
+└── cityscape_api
+    ├── app.py
+    ├── config
+    ├── requirements.txt
+    ├── services
+    └── views
+```
+
+This is a simple API that returns the weather and sun positions to a request that with a postcode and country code. It  doesn't actually do any work apart from calling other third party APIs and wait for them to return the result.
+
+One thing to note is that Flask actually does not support any async capability, whatsoever, at all. *(This is as at 2018.)*
+
+
+
 # Parallelism in C (with Cython)
 
 # Notes
