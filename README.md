@@ -68,6 +68,8 @@
   - [The App](#the-app)
   - [`quart`](#quart)
   - [The Conversion](#the-conversion)
+  - [Load-testing](#load-testing)
+  - [Remember to run on an ASGI server](#remember-to-run-on-an-asgi-server)
 - [Parallelism in C (with Cython)](#parallelism-in-c-with-cython)
 - [Notes](#notes)
 # General
@@ -2360,6 +2362,54 @@ This means that converting a Flask app into quart requires minimal work
 Apart from the higher level chang of library call from `flask` to `quart`, we also need to go down to the low level service calls and transform the synchronous functions into asynchronous programming mode.
 
 This means changing `requests` call to `aiohttp`.
+
+## Load-testing
+
+After async conversion, we also want to do proper load testing.
+
+https://github.com/wg/wrk is one of those.
+
+One important thing to note is that by load-testing our app, we are also going to load-test/hammer the external services which is not going to be ideal.
+
+To do that, we can change `use_cached_data` in the `dev.json` config file to `true`.
+
+Here is the final result of the load testing:
+
+![](./code_img/README-2022-07-24-23-03-59.png)
+
+![](./code_img/README-2022-07-24-23-04-18.png)
+
+## Remember to run on an ASGI server
+
+The traditional and default web server that underlines most web frameworks like Django and Flask is WSGI, which executes the web operations synchronously.
+
+*(Importantly, we also don't want to use the `run()` method that comes with web frameworks because it enables features for development but aren't ideal for production performance.)*
+
+In order to run our code asynchronously, we need to run the web app on an ASGI server instead.
+
+One example is `Hypercorn`.
+
+Example:
+
+To use Quart with an ASGI server simply point the server at the Quart application, for example:
+
+**example.py**
+```py
+from quart import Quart
+
+app = Quart(__name__)
+
+@app.route('/')
+async def hello():
+    return 'Hello World'
+```
+
+Then, we can run this app with Hypercorn using:
+```
+hypercorn example:app
+```
+
+*From https://pgjones.gitlab.io/quart/tutorials/deployment.html*
 
 # Parallelism in C (with Cython)
 
