@@ -85,7 +85,18 @@
     - [Going GIL-less with Cython](#going-gil-less-with-cython)
     - [Overflowing variable](#overflowing-variable)
     - [Concept Summary - `nogil`](#concept-summary---nogil)
-- [Notes](#notes)
+- [The Finish Line](#the-finish-line)
+  - [Why async](#why-async)
+  - [True concurrency](#true-concurrency)
+  - [Co-operative concurrency with `async`, `await` & `asyncio`](#co-operative-concurrency-with-async-await--asyncio)
+  - [True threaded programming](#true-threaded-programming)
+  - [Thread Safety](#thread-safety-1)
+  - [Multiprocessing](#multiprocessing)
+  - [Extending co-operative concurrency](#extending-co-operative-concurrency)
+    - [Mixed Mode Parallelism](#mixed-mode-parallelism)
+    - [`trio` nursery](#trio-nursery)
+    - [Quart, instead of Flask](#quart-instead-of-flask)
+    - [Cython Concurrency](#cython-concurrency)
 # General
 
 ![](./code_img/README-2022-06-08-17-14-52.png)
@@ -2828,9 +2839,157 @@ However, if this were the only thing we did, the code would fail to compile. So 
 
 ```2. Fully convert all variables that are used in the nogil block into Cython objects```
 
+# The Finish Line
+
+## Why async 
+
+Let's review what we learned.
+
+We begin the course by understanding why we should be doing asynchronous programming. This is because we want to take advantage of the modern CPU hardware, specifically its multi-core nature.
+
+![](./code_img/README-2022-07-31-22-22-29.png)
+
+## True concurrency
+
+If we truly want to use concurrent programming and write computational procedures that executes in parallel, there are only two ways to do so in Python:
+- Use multi-processing
+- Use Cython to go GIL-less with threads
+
+## Co-operative concurrency with `async`, `await` & `asyncio`
+
+However, for applications that aren't so computation intensive, such as handling web requests and waiting for database trips, we could use `asyncio` to do "co-operative" concurrency, which essentially involves breaking a task into pieces and interweave these pieces whilst they are waiting for something:
+
+![](./code_img/README-2022-07-31-22-30-21.png)
+
+This is the heart of the `async` and `await` keywords in Python, and the `asyncio` library.
+
+## True threaded programming
+
+This concept of "co-operative" concurrency in Python is entirely different with the concept of threaded programming in general, in which the CPU ultimately decides how programs run in parallel. This concept is illustrated below:
+![](./code_img/README-2022-07-31-22-32-29.png)
+
+The key difference is is that it is not up to the hard-coded "co-operativeness" of the program but rather the CPU simply decides how tasks are executed in parallel.
+
+## Thread Safety
+
+Once we start working seriously with threads, we need to start thinking about **thread safety**. 
+
+The rule of thumb is to **share as little data between threads, as much as possible**. However a lot of the time this is impractical.
+
+At the heart of this problem is the unavoidable nature of a program entering an invalid state.
+
+When our program executes, this often involve changing different states of the program, putting those into a new state. When we go through this process, it is impossible to stop the program from entering temporarily invalid states.
+
+Athough this isn't a problem in synchronous programming, it can become a big problem in threade d programming if not done right. So we must make sure that when we are entering these invalid states, other threads cannot see it.
+
+This is what thread safety is about, using a lock mechanism.
+```python
+import threading
+
+# Always use Rlock() over Lock()
+the_lock = threading.Rlock()
+
+with the_lock:
+    # Do potentially unsafe operation(s)
+```
+
+## Multiprocessing
+
+Multiprocessing is the Python way of side-stepping the GIL:
+![](./code_img/README-2022-07-31-22-56-37.png)
+
+```py
+from multiprocessing.pool import Pool
+
+pool = Pool(processes=4)
+pool.apply_async(func=do_math, args=(0,100))
+pool.apply_async(func=do_math, args=(101,200))
+pool.apply_async(func=do_math, args=(201,300))
+pool.apply_async(func=do_math, args=(301,400))
+
+pool.close()    # must close
+pool.join()     # , then join
+```
+
+The Python multiprocessing API, and the threads API are different, making it difficult to switch between the two. This forces developers to commit to one of the two APIs.
+
+This is where the **Pool Executor** comes in. It allows us to switch between multi-threading and multi-processing by simply changing the `import` statement.
+
+```py
+from concurrent.futures.thread import ThreadPoolExecutor as ExecutorImpl
+# or
+from concurrent.futures.process import ProcessPoolExecutor as Executor Impl
 
 
-# Notes
+with ExecutorImpl() as executor:
+    actions = []
+    for url in urls:
+        f: Future = executor.submit(get_title, url)
+        actions.append(f)
 
-- Use `python3.10`
-- 
+titles = [a.result() for a in actions]
+```
+
+## Extending co-operative concurrency 
+
+On top of `asyncio`, there are a few other async helper libraries that we can use:
+
+### Mixed Mode Parallelism
+
+Firstly, There is the concept of **Mixed Mode Parallelism** that can be done using with helper library `unsync`:
+```py
+tasks = [
+    compute_some(),         # multiprocess
+    download_some(),        # asyncio
+    download_some_more(),   # thread
+    wait_some()             # asyncio
+]
+
+[t.result() for t in tasks]
+
+@unsync(cpu_bound=True)
+def compute_some() ...
+
+@unsync()
+async def download_some(): ...
+
+@unsync()
+def download_some_more(): ...
+```
+
+### `trio` nursery
+
+Secondly, we can do task coordination with `trio`. Its main purpose is to add a bit of coordination into the `async` `await` world.
+
+In this `async` `await` world, where `asyncio` exists, it is easy to implement an event loop. However, what if we want parent and child task? What if we have a whole bunch of work going and we have error on one, and we want to cancel the whole thing?
+
+This is where `trio` comes in:
+
+```py
+# limit nursery to 5s
+with trio.move_on_after(5):
+    async with trio.open_nursery() as nursery:
+        nursery.start_soon(generate_data, 20, data, name='Generate data 1')
+        nursery.start_soon(generate_data, 20, data, name='Generate data 2')
+        nursery.start_soon(process_data, 40, data, name='Consumer')
+
+# All work (these and children tasks) are done or cancelled here.
+```
+
+If we do use `trio`, it is important to remember that we'd also need to bridge some of our `asyncio` procedures, such as using the `trio`-enabled version of `aiohttp`. 
+
+### Quart, instead of Flask
+
+Not much to say here.
+
+### Cython Concurrency
+
+Due to the presence of the GIL, Python threads is a bit of a gimmick if the task is CPU-bound.
+
+This is where Cython comes in.
+
+With Cython, we can rewrite our Python code in C.
+
+We can also use the `nogil` context manager to release the GIL. Within this block, we need to make sure that we aren't using any Python complex objects.
+
+Also, don't forget about overflowing variables.
