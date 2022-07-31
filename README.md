@@ -71,6 +71,15 @@
   - [Load-testing](#load-testing)
   - [Remember to run on an ASGI server](#remember-to-run-on-an-asgi-server)
 - [Parallelism in C (with Cython)](#parallelism-in-c-with-cython)
+  - [Cython (not CPython)](#cython-not-cpython)
+  - [Why Cython?](#why-cython)
+  - [What does Cython look like?](#what-does-cython-look-like)
+    - [Differences](#differences)
+  - [Demo: Hello Cython](#demo-hello-cython)
+  - [Demo: Fast threading with Cython](#demo-fast-threading-with-cython)
+    - [Identify hotspots](#identify-hotspots)
+    - [Going GIL-less with Cython](#going-gil-less-with-cython)
+    - [Overflowing variable](#overflowing-variable)
 - [Notes](#notes)
 # General
 
@@ -2391,27 +2400,397 @@ One example is `Hypercorn`.
 
 Example:
 
-To use Quart with an ASGI server simply point the server at the Quart application, for example:
-
-**example.py**
-```py
-from quart import Quart
-
-app = Quart(__name__)
-
-@app.route('/')
-async def hello():
-    return 'Hello World'
-```
-
-Then, we can run this app with Hypercorn using:
-```
-hypercorn example:app
-```
+> To use Quart with an ASGI server simply point the server at the Quart application, for example:
+> 
+> **example.py**
+> ```py
+> from quart import Quart
+> 
+> app = Quart(__name__)
+> 
+> @app.route('/')
+> async def hello():
+>     return 'Hello World'
+> ```
+> 
+> Then, we can run this app with Hypercorn using:
+> ```
+> hypercorn example:app
+> ```
 
 *From https://pgjones.gitlab.io/quart/tutorials/deployment.html*
 
 # Parallelism in C (with Cython)
+
+Up to this point we have been operating only within the Python landscape, utilising Python libraries.
+
+We can also utilise C libraries. C can do anything. Our OS runs on C. C is super low-level. 
+
+C is very good at parallelism.
+
+![](./code_img/README-2022-07-28-21-01-00.png)
+
+Because C is so low-level, just converting part of our program into C without parallelizing it also can make it run a lot faster.
+
+C and Python have a great integration. Developers can [extend Python with C or C](https://docs.python.org/3/extending/extending.html) which means writing Python libraries using C/ C#.
+
+Let's say we are writing a program that uses `numpy`. By implementing `numpy`, we are mixing things up a little, because `numpy` is mostly written in C. `numpy` is also highly optimized. The same case applies to `sqlalchemy`, there are parts that are implemented in C.
+
+This chapter is not about writing in C, or C++ however. What we are talking about is writing Python code that optimizes Python programs.
+
+## Cython (not CPython)
+
+This is where `Cython` jumps in. Cython is an **optimizing static compiler** for the Python programming language. It makes writing C extensions for Python as easy as writing Python itself.
+
+Cython is unrelated to CPython, which is the default and most widely used implementation of the Python language. CPython can be defined as **both an interpreter and a compiler** as it compiles Python code into bytecode before interpreting it.
+
+Cython first compiles into C, and then into bytecode. Programming in Cython is as if we were programming in C code, except that the syntax is Python and the libraries we get to use are Python.
+
+## Why Cython?
+
+- To write Python code that calls back and forth from and to C or C++ code natively at any point. This allows us to integrate with libraries implemented in C directly in Python.
+- Writing Cython involves tuning readable Python code into plain C performance. It is done easily by adding static  type declarations.
+- With Cython, developers can also use combined source code level debugging to find bugs in Python, Cython, and C code.
+- To interact efficiently with large datasets, e.g. using multi-dimensional NumPy arrays. Cython actually comes from the more mathematical space of Python.
+- Because Cython can interact with libraries from CPython, we can `pip install` any random libraries, and use that.
+- to integrate natively with existing code and data from legacy, low-level or high-performance libraries and applications.
+
+## What does Cython look like?
+
+This is pure Python:
+```py
+import math
+
+def do_math(start: int, num: int):
+    dist = 0.0
+    pos = start
+    k_sq = 1000 * 1000
+
+    while pos < num:
+        pos += 1
+        dist = math.sqrt((pos - k_sq) * (pos - k_sq))
+```
+
+This is the same function in Cython:
+```Cython
+from libc.math cimport sqrt
+
+def do_math(start: cython.int, num: cython.int):
+    dist: cython.float = 0.0
+    pos: cython.float = start
+    k_sq: cython.float = 1000 * 1000
+
+    while pos < num:
+        pos += 1
+        dist = sqrt((pos - k_sq) * (pos - k_sq))
+```
+
+### Differences
+
+There are two differences here.
+
+The key difference is the added type annotation. 
+
+The reason why Python is slow is that Python objects, regardless of whether they are an `int`, or a `str` is that they aren't simple datatype, but complex Python objects that are allocated on memory heap. Using these complex objects add a lot overhead and slow things down. 
+
+We can avoid this by explicitly say "start a `cython.int` object", which would allocate on the stack (not heap) in C.
+
+Another difference is that we are using a more performant version of `sqrt`. The `math` library of Python is not optimized because of some limitations that we'll discuss later.
+
+## Demo: Hello Cython
+
+Let's say we want to write a simple program that asks for your name and say hi says hello world.
+
+Let's start with a simple main file:
+
+```py
+def main():
+    pass
+
+if __name__ == '__main__':
+    main()
+```
+
+Then, we are going to create an extra library that does the greeting. This will be **greeter.py**.
+```py
+def greet(name: str):
+    print("Hello {}".format(name))
+```
+
+```
+$ python program.py 
+What is your name? Misha
+Helo Misha 
+```
+
+Let's now convert this program into Cython. Let's go from interpreted code, into native code.
+
+First, we convert the file name from **greeter.py** into *greeter.pyx*
+
+At this point, if we did run the program again, it wouldn't not work. The `greeter` module would not be available yet.
+```
+$ python program.py
+Traceback (most recent call last):
+  File "/home/kkennynguyen/deve/async-techniques-python/cython/hello_world/program.py", line 1, in <module>
+    import greeter
+ModuleNotFoundError: No module named 'greeter'      
+```
+
+We need to compile the code. In order to do the compilation, we have to install Cython and have a **setup.py** file.
+```
+pip install cython
+```
+
+Then, write the **setup.py** file:
+```py
+from disutils.core import setup
+from Cython.Build import cythonize
+
+setup(
+    ext_modules=cythonize("greeter.pyx")
+)
+```
+
+Then, we need to run the below commands. Before that, it's also a good idea to delete the `__pycache__` folder.
+```
+$ python setup.py build_ext --inplace
+...../setup.py:1: DeprecationWarning: The distutils package is deprecated and slated for removal in Python 3.12. Use setuptools or check PEP 632 for potential alternatives
+  from distutils.core import setup
+Compiling greeter.pyx because it changed.
+[1/1] Cythonizing greeter.pyx
+/home/kkennynguyen/.pyenv/versions/3.10.0/lib/python3.10/site-packages/Cython/Compiler/Main.py:369: FutureWarning: Cython directive 'language_level' not set, using 2 for now (Py2). This will change in a later release! File: /home/kkennynguyen/deve/async-techniques-python/cython/hello_world/greeter.pyx
+  tree = Parsing.p_module(s, pxd, full_module_name)
+running build_ext
+building 'greeter' extension
+creating build
+creating build/temp.linux-x86_64-3.10
+gcc -pthread -Wno-unused-result -Wsign-compare -DNDEBUG -g -fwrapv -O3 -Wall -fPIC -I/home/kkennynguyen/.pyenv/versions/3.10.0/include/python3.10 -c greeter.c -o build/temp.linux-x86_64-3.10/greeter.o
+gcc -pthread -shared -L/home/kkennynguyen/.pyenv/versions/3.10.0/lib -L/home/kkennynguyen/.pyenv/versions/3.10.0/lib build/temp.linux-x86_64-3.10/greeter.o -o /home/kkennynguyen/deve/async-techniques-python/cython/hello_world/greeter.cpython-310-x86_64-linux-gnu.so 
+```
+
+If we look again, there is a new file:
+```
+$ ls -1
+build
+greeter.c
+greeter.cpython-310-x86_64-linux-gnu.so
+greeter.pyx
+program.py
+setup.py 
+```
+
+The program now also works:
+```
+$ python program.py 
+What is your name? Misha
+Hello Misha
+```
+
+If we want to make sure that we are **definitely** running in Cython, we can also add an extra `print` in the `.pythonx` file to show the file name:
+```
+...
+    print(" ** Running from {} **".format__file__))                                                                                                 
+```
+
+We need to re-compile..
+```sh
+python setup.py build_ext --inplace
+```
+
+```
+$ python program.py
+What is your name? Misha
+Hello Misha
+ ** Running from /home/kkennynguyen/deve/async-techniques-python/cython/hello_world/greeter.cpython-310-x86_64-linux-gnu.so ** 
+```
+
+This is the file that the code is running from. Note also that there is a **greeter.c** file.
+
+** Cython: Concept
+
+**Step 1.** Write Cython code, **hello.pyx**. This could be just pure Python, or a Python file with added type annotations.
+```py
+print("Hello Cython!")
+```
+
+**Step 2.** Create a **setup.py** file:
+```py
+from disutils.core import setup
+from Cython.Build import cythonize
+
+setup(
+    ext_modules=cythonize("hello.pyx")
+)
+```
+
+**Step 3.** Compile the cython file using **setup.py**:
+```
+$ pip install -U cython
+$ python setup.py build_ext --inplace
+running build_ext
+building 'hello' extension
+creating build
+...
+```
+
+## Demo: Fast threading with Cython
+
+With our new founded familiriaty with Cython, let's go and apply this new power and apply it to parallel programming, using threads.
+
+There are two layers of optimization:
+- First, moving from Python into Cython makes our program faster.
+- Second of all, using Cython lets us free from GIL, which allows us to go even faster.
+
+With these, our program can be extremely performant.
+
+Let's start with some function that does purely math:
+```py
+import datetime
+import math
+
+
+def main():
+    do_math(1)
+
+    t0 = datetime.datetime.now()
+
+    do_math(num=3_000_000)
+
+    dt = datetime.datetime.now() - t0
+    print(f"Done in {dt.total_seconds():,.2f} sec.")
+
+
+def do_math(start=0, num=10):
+    pos = start
+    k_sq = 1000 * 1000
+    while pos < num:
+        pos += 1
+        dist = math.sqrt((pos - k_sq)*(pos - k_sq))
+
+
+if __name__ == '__main__':
+    main()
+```
+
+This program simply cannot be improved with threading. It cannot go ANY faster with the use of threading because of the GIL.
+
+This is why **compute_threaded.py** doesn't run any faster than **compute_it.py**.
+```
+$ python compute_it.py 
+Done in 0.44 sec.
+
+$ python compute_threaded.py 
+Doing math on 12 processors.
+Done in 0.47 sec. (factor: 0.91x)
+```
+
+Let's use Cython to break free from the GIL. Let's re-write **compute_threaded.py** into Cython, **compute_cython.py**.
+
+### Identify hotspots
+
+One important thing is that, if we want to convert our Python program into Cython, don't go and rewrite the whole thing. That would be silly.
+
+What you want to do is find the most time-consuming bit of the program, so-called "hot spots", and rewrite it.
+
+This can be found out using a number of ways, Pycharm..etc..
+
+In our little program, this is the `do_math()` function. So, let's copy this function into a new file `math.core.pyx`, which will be in Cython.
+
+In `compute_cython.py`, we also don't want to use `math`, but `math_core`, which is the re-implemented library.
+```
+import math --> import math_core
+
+math.do_math() ---> math_core.do_math()
+```
+
+We also need a new **setup.py** file:
+```py
+from distutils.core import setup
+from Cython.Build import cythonize
+
+setup(
+    ext_modules=cythonize("math_core.pyx")
+)  
+```
+
+If we were to run **compute_cython.py** now, the program would run a tiny bit faster. However it is important to note that the GIL is still in place here.
+
+We need to go GIL-less, to harness the true power of threaded programming.
+
+### Going GIL-less with Cython
+
+Here is our program right now
+
+```py
+import math
+
+def do_math(start=0, num=10):
+    pos = start
+    k_sq = 1000*1000
+    while pos < num:
+        pos += 1
+        math.sqrt((pos - k_sq) * (pos - k_sq)) 
+```
+
+Here is how we turn the GIL off:
+```python
+from libc.math cimport sqrt
+
+import cython
+
+def do_math(start: cython.float =0, num: cython.float = 10):
+    pos: cython.float = start
+    k_sq: cython.float = 1000 * 1000
+
+    with nogil:
+        while pos < num:
+            pos += 1
+            sqrt((pos - k_sq) * (pos - k_sq))
+```
+
+Note that if we were to simply add the `with nogil` line, we would run into a compile error because we cannot simply use the `nogil` context manager, whilst still using Python objects.
+
+Now, if we were to compile the Cython package and run our program again, it would be blazing fast.
+```sh
+$ python setup.py build_ext --inplace
+....async-techniques-python/cython/perf/setup.py:1: DeprecationWarning: The distutils package is deprecated and slated for removal in Python 3.12. Use setuptools or check PEP 632 for potential alternatives
+  from distutils.core import setup
+Compiling math_core.pyx because it changed.
+[1/1] Cythonizing math_core.pyx
+.../.pyenv/versions/3.10.0/lib/python3.10/site-packages/Cython/Compiler/Main.py:369: FutureWarning: Cython directive 'language_level' not set, using 2 for now (Py2). This will change in a later release! File: /home/kkennynguyen/deve/async-techniques-python/cython/perf/math_core.pyx
+  tree = Parsing.p_module(s, pxd, full_module_name)
+running build_ext
+building 'math_core' extension
+creating build
+creating build/temp.linux-x86_64-3.10
+gcc -pthread -Wno-unused-result -Wsign-compare -DNDEBUG -g -fwrapv -O3 -Wall -fPIC -I/home/kkennynguyen/.pyenv/versions/3.10.0/include/python3.10 -c math_core.c -o build/temp.linux-x86_64-3.10/math_core.o
+gcc -pthread -shared -L/home/kkennynguyen/.pyenv/versions/3.10.0/lib -L/home/kkennynguyen/.pyenv/versions/3.10.0/lib build/temp.linux-x86_64-3.10/math_core.o -o /home/kkennynguyen/deve/async-techniques-python/cython/perf/math_core.cpython-310-x86_64-linux-gnu.so 
+```
+
+Here is the result:
+```
+$ python compute_it.py 
+Done in 0.44 sec. 
+
+$ python compute_threaded.py 
+Doing math on 12 processors.
+Done in 0.47 sec. (factor: 0.91x)
+
+$ python compute_cython.py 
+Doing math on 12 processors.
+Done in 0.0010 sec. (factor: 427.44x)  
+```
+
+![](https://media.giphy.com/media/VEFbVVKhY28GA/giphy.gif)
+
+### Overflowing variable
+
+When we move away from the Python object into simple C data type, there is one caution that we need to take.
+
+In Python we don't think about numbers very much. We can keep making integers bigger and bigger until we out of memory or our patience.
+
+In Cython, however, as in the case of `cython.int`, these are C integers and C integers are limited to 32 bits. This limitation is very easy to overflow.
+
 
 # Notes
 
