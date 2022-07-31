@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://media.giphy.com/media/hhxvgQ2iwKF1iIljeF/giphy.gif" />
+</p>
+
 - [General](#general)
 - [Why Async and When?](#why-async-and-when)
   - [Async for Performance/Speed](#async-for-performancespeed)
@@ -80,6 +84,7 @@
     - [Identify hotspots](#identify-hotspots)
     - [Going GIL-less with Cython](#going-gil-less-with-cython)
     - [Overflowing variable](#overflowing-variable)
+    - [Concept Summary - `nogil`](#concept-summary---nogil)
 - [Notes](#notes)
 # General
 
@@ -2790,6 +2795,39 @@ When we move away from the Python object into simple C data type, there is one c
 In Python we don't think about numbers very much. We can keep making integers bigger and bigger until we out of memory or our patience.
 
 In Cython, however, as in the case of `cython.int`, these are C integers and C integers are limited to 32 bits. This limitation is very easy to overflow.
+
+Once a variable overflows, what happens is that it becomes negative.
+
+How do we deal with this?
+
+Well one way is not to use `cython.int`, but rather `cython.float`.
+
+### Concept Summary - `nogil`
+
+```python
+from libc.math cimport sqrt
+
+def do_math(start: cython.int, num: cython.int):
+    dist: cython.float = 0.0
+    pos: cython.float = start
+    k_sq: cython.float = 1000 * 1000
+
+    with nogil:
+        while pos < num:
+            pos += 1
+            dist = sqrt((pos - k_sq) * (pos - k_sq))
+```
+
+In Python, which is synonymous to say "In CPython", we cannot simply go and say: "I want to create a block of code, and I'm telling Python for this block of code, I **don't** need the protection of the GIL."
+
+In order to do that, we need to...
+
+```1. Convert the code to Python```
+
+However, if this were the only thing we did, the code would fail to compile. So in addition to that, we need to also:
+
+```2. Fully convert all variables that are used in the nogil block into Cython objects```
+
 
 
 # Notes
