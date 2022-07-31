@@ -112,6 +112,7 @@ Essentially it's "stuff happening at the same time".
 ## Async for Performance/Speed
 
 ![](./code_img/README-2022-06-08-17-20-14.png)
+
 *(https://www.slideshare.net/Funk98/end-of-moores-law-or-a-change-to-something-else.)*
 
 CPU isn't getting much faster. This is a hardware limitation. It's simply not possible to make smaller circuits in CPU, for thermal and inteference reasons. 
@@ -136,7 +137,7 @@ Not all of the program execution can be made faster by adding concurrency. Only 
 
 In this case, the overall performance boost is at max 20%.
 
-The real question to ask yourself, before introducing any concurrency is: How much can actually be made faster with concurrency? Is it worth the effort and complexity?
+The real question to ask yourself, before introducing any concurrency is: **How much** can actually be made faster with concurrency? Is it worth the effort and complexity?
 
 What is the upper bound for improvement? There is **always** an upper bound for improvement.
 
