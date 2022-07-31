@@ -1,1 +1,5 @@
-site_name: My Docs
+site_name: Learning Python async techniques
+theme:
+  name: readthedocs
+plugins:
+  - search
