@@ -26,7 +26,7 @@
   - [`uvloop` - super easy performance gain](#uvloop---super-easy-performance-gain)
   - [Let's do some real work - web scraping with `aiohttp`](#lets-do-some-real-work---web-scraping-with-aiohttp)
   - [Other async capable libraries](#other-async-capable-libraries)
-- [Threads & Multi-threaded parallelism](#threads--multi-threaded-parallelism)
+- [Threads \& Multi-threaded parallelism](#threads--multi-threaded-parallelism)
   - [Parallel programming with threads](#parallel-programming-with-threads)
   - [Choosing between threads and `asyncio`](#choosing-between-threads-and-asyncio)
   - [Hello threads](#hello-threads)
@@ -88,7 +88,7 @@
 - [The Finish Line](#the-finish-line)
   - [Why async](#why-async)
   - [True concurrency](#true-concurrency)
-  - [Co-operative concurrency with `async`, `await` & `asyncio`](#co-operative-concurrency-with-async-await--asyncio)
+  - [Co-operative concurrency with `async`, `await` \& `asyncio`](#co-operative-concurrency-with-async-await--asyncio)
   - [True threaded programming](#true-threaded-programming)
   - [Thread Safety](#thread-safety-1)
   - [Multiprocessing](#multiprocessing)
@@ -2919,7 +2919,7 @@ This is where the **Pool Executor** comes in. It allows us to switch between mul
 ```py
 from concurrent.futures.thread import ThreadPoolExecutor as ExecutorImpl
 # or
-from concurrent.futures.process import ProcessPoolExecutor as Executor Impl
+from concurrent.futures.process import ProcessPoolExecutor as ExecutorImpl
 
 
 with ExecutorImpl() as executor:
